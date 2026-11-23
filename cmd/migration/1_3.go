@@ -13,7 +13,7 @@ import (
 
 func migrate_dns(db *gorm.DB) error {
 	var configStr string
-	err := db.Model(model.Setting{}).Select("value").Where("key = ?", "config").First(&configStr).Error
+	err := db.Model(model.Setting{}).Select("value").Where("key = ?", "config").Limit(1).Scan(&configStr).Error
 	if err != nil {
 		return err
 	}

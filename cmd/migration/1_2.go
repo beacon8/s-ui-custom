@@ -242,6 +242,10 @@ func migrateTls(db *gorm.DB) error {
 		return err
 	}
 
+	if len(tlsConfig) == 0 {
+		return nil
+	}
+
 	for index, tls := range tlsConfig {
 		var tlsClient map[string]interface{}
 		err = json.Unmarshal(tls.Client, &tlsClient)
@@ -276,6 +280,10 @@ func migrateClients(db *gorm.DB) error {
 		return err
 	}
 
+	if len(oldClients) == 0 {
+		return nil
+	}
+
 	for index, oldClient := range oldClients {
 		var old_inbounds []string
 		err = json.Unmarshal(oldClient.Inbounds, &old_inbounds)
@@ -293,6 +301,9 @@ func migrateClients(db *gorm.DB) error {
 }
 
 func migrateChanges(db *gorm.DB) error {
+	if !db.Migrator().HasColumn(&model.Changes{}, "index") {
+		return nil
+	}
 	return db.Migrator().DropColumn(&model.Changes{}, "index")
 }
 
