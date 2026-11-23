@@ -83,8 +83,8 @@ d en bin_exists "directory exists yet! Please check the content and delete it ma
 d en got_version "Got s-ui latest version: %s, beginning the installation..."
 d en fetch_fail "Failed to fetch s-ui version, it maybe due to Github API restrictions, please try it later"
 d en download_fail "Downloading s-ui failed, please be sure that your server can access Github"
-d en begin_install "Beginning the install s-ui v%s"
-d en download_ver_fail "download s-ui v%s failed, please check the version exists"
+d en begin_install "Beginning the install s-ui %s"
+d en download_ver_fail "download s-ui %s failed, please check the version exists"
 d en extract_fail "Extracting s-ui failed, the archive may be corrupt or the disk is full"
 d en broken_bin "The installed s-ui binary does not run, the installation is incomplete"
 d en install_finished "installation finished, it is up and running now..."
@@ -165,8 +165,8 @@ d ru bin_exists "каталог всё ещё существует! Провер
 d ru got_version "Получена последняя версия s-ui: %s, начинается установка..."
 d ru fetch_fail "Не удалось получить версию s-ui, возможно из-за ограничений Github API, попробуйте позже"
 d ru download_fail "Не удалось загрузить s-ui, убедитесь, что ваш сервер имеет доступ к Github"
-d ru begin_install "Начинается установка s-ui v%s"
-d ru download_ver_fail "загрузка s-ui v%s не удалась, проверьте существование этой версии"
+d ru begin_install "Начинается установка s-ui %s"
+d ru download_ver_fail "загрузка s-ui %s не удалась, проверьте существование этой версии"
 d ru extract_fail "Не удалось распаковать s-ui: архив повреждён или на диске нет места"
 d ru broken_bin "Установленный файл s-ui не запускается, установка неполная"
 d ru install_finished "установка завершена, панель запущена и работает..."
@@ -206,8 +206,8 @@ d vi bin_exists "thư mục vẫn tồn tại! Vui lòng kiểm tra nội dung v
 d vi got_version "Đã lấy phiên bản s-ui mới nhất: %s, bắt đầu cài đặt..."
 d vi fetch_fail "Không thể lấy phiên bản s-ui, có thể do giới hạn của Github API, vui lòng thử lại sau"
 d vi download_fail "Tải s-ui thất bại, hãy chắc chắn máy chủ của bạn có thể truy cập Github"
-d vi begin_install "Bắt đầu cài đặt s-ui v%s"
-d vi download_ver_fail "tải s-ui v%s thất bại, vui lòng kiểm tra phiên bản có tồn tại không"
+d vi begin_install "Bắt đầu cài đặt s-ui %s"
+d vi download_ver_fail "tải s-ui %s thất bại, vui lòng kiểm tra phiên bản có tồn tại không"
 d vi extract_fail "Giải nén s-ui thất bại, tệp có thể bị hỏng hoặc đĩa đã đầy"
 d vi broken_bin "Tệp s-ui đã cài đặt không chạy được, quá trình cài đặt chưa hoàn tất"
 d vi install_finished "cài đặt hoàn tất, hiện đang chạy..."
@@ -247,8 +247,8 @@ d zhcn bin_exists "目录仍然存在！请检查内容并在迁移后手动删�
 d zhcn got_version "已获取 s-ui 最新版本：%s，开始安装..."
 d zhcn fetch_fail "获取 s-ui 版本失败，可能是由于 Github API 限制，请稍后再试"
 d zhcn download_fail "下载 s-ui 失败，请确保您的服务器可以访问 Github"
-d zhcn begin_install "开始安装 s-ui v%s"
-d zhcn download_ver_fail "下载 s-ui v%s 失败，请检查该版本是否存在"
+d zhcn begin_install "开始安装 s-ui %s"
+d zhcn download_ver_fail "下载 s-ui %s 失败，请检查该版本是否存在"
 d zhcn extract_fail "解压 s-ui 失败，压缩包可能已损坏或磁盘空间不足"
 d zhcn broken_bin "已安装的 s-ui 程序无法运行，安装不完整"
 d zhcn install_finished "安装完成，现已运行..."
@@ -288,8 +288,8 @@ d zhtw bin_exists "目錄仍然存在！請檢查內容並在遷移後手動刪�
 d zhtw got_version "已取得 s-ui 最新版本：%s，開始安裝..."
 d zhtw fetch_fail "取得 s-ui 版本失敗，可能是由於 Github API 限制，請稍後再試"
 d zhtw download_fail "下載 s-ui 失敗，請確保您的伺服器可以存取 Github"
-d zhtw begin_install "開始安裝 s-ui v%s"
-d zhtw download_ver_fail "下載 s-ui v%s 失敗，請檢查該版本是否存在"
+d zhtw begin_install "開始安裝 s-ui %s"
+d zhtw download_ver_fail "下載 s-ui %s 失敗，請檢查該版本是否存在"
 d zhtw extract_fail "解壓 s-ui 失敗，壓縮檔可能已損毀或磁碟空間不足"
 d zhtw broken_bin "已安裝的 s-ui 程式無法執行，安裝不完整"
 d zhtw install_finished "安裝完成，現已執行..."
@@ -338,11 +338,6 @@ arch() {
     case "$(uname -m)" in
     x86_64 | x64 | amd64) echo 'amd64' ;;
     i*86 | x86) echo '386' ;;
-    armv8* | armv8 | arm64 | aarch64) echo 'arm64' ;;
-    armv7* | armv7 | arm) echo 'armv7' ;;
-    armv6* | armv6) echo 'armv6' ;;
-    armv5* | armv5) echo 'armv5' ;;
-    s390x) echo 's390x' ;;
     *) echo "$(t unsupported_arch)" >&2; return 1 ;;
     esac
 }
@@ -629,7 +624,7 @@ install_s-ui() {
         systemctl enable s-ui --now || exit 1
     fi
 
-    printf "${green}s-ui v${last_version}${plain} $(t install_finished)\n"
+    printf "${green}s-ui ${last_version}${plain} $(t install_finished)\n"
     echo -e "$(t access_panel)${green}"
     /usr/local/s-ui/sui uri
     echo -e "${plain}"
