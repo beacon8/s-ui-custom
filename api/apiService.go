@@ -71,6 +71,7 @@ func (a *ApiService) getData(c *gin.Context) (interface{}, error) {
 		return "", err
 	}
 	connections := a.StatsService.GetConnections()
+	ipCounts := a.StatsService.GetActiveIPCounts()
 	if isUpdated {
 		config, err := a.SettingService.GetConfig()
 		if err != nil {
@@ -119,10 +120,12 @@ func (a *ApiService) getData(c *gin.Context) (interface{}, error) {
 		data["enableTraffic"] = trafficAge > 0
 		data["onlines"] = onlines
 		data["connections"] = connections
+		data["ipCounts"] = ipCounts
 		data["os"] = runtime.GOOS
 	} else {
 		data["onlines"] = onlines
 		data["connections"] = connections
+		data["ipCounts"] = ipCounts
 	}
 
 	return data, nil
@@ -251,6 +254,13 @@ func (a *ApiService) GetSessions(c *gin.Context) {
 	}
 	sessions, err := a.StatsService.GetSessions(resource, c.Query("tag"))
 	jsonObj(c, sessions, err)
+}
+
+// GetUserIps returns the distinct IPs of one user, for the client list and the
+// session modal.
+func (a *ApiService) GetUserIps(c *gin.Context) {
+	summary, err := a.StatsService.GetUserIPs(c.Query("user"))
+	jsonObj(c, summary, err)
 }
 
 func (a *ApiService) CloseSessions(c *gin.Context) {

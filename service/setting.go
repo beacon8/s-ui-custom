@@ -78,6 +78,9 @@ var defaultValueMap = map[string]string{
 	"sessionMaxAge":      "0",
 	"trafficAge":         "30",
 	"statsBucketSeconds": "60",
+	"ipv4Prefix":         "32",
+	"ipv6Prefix":         "64",
+	"ipLimitDryRun":      "false",
 	"timeLocation":       "Asia/Tehran",
 	"subListen":          "",
 	"subPort":            "2096",
@@ -220,6 +223,29 @@ func (s *SettingService) getInt(key string) (int, error) {
 func (s *SettingService) setInt(key string, value int) error {
 	return s.setString(key, strconv.Itoa(value))
 }
+
+// GetIPPrefixes returns the prefix lengths used to group client addresses.
+// Invalid or missing values fall back to /32 and /64.
+func (s *SettingService) GetIPPrefixes() (int, int) {
+	ipv4Prefix, ipv6Prefix := 32, 64
+	if value, err := s.getInt("ipv4Prefix"); err == nil && value >= 1 && value <= 32 {
+		ipv4Prefix = value
+	}
+	if value, err := s.getInt("ipv6Prefix"); err == nil && value >= 1 && value <= 128 {
+		ipv6Prefix = value
+	}
+	return ipv4Prefix, ipv6Prefix
+}
+
+// GetIPLimitDryRun reports whether IP limits only log would-be rejections.
+func (s *SettingService) GetIPLimitDryRun() bool {
+	value, err := s.getBool("ipLimitDryRun")
+	if err != nil {
+		return false
+	}
+	return value
+}
+
 func (s *SettingService) GetListen() (string, error) {
 	return s.getString("webListen")
 }

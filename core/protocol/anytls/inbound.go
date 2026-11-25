@@ -10,6 +10,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/inbound"
 	"github.com/sagernet/sing-box/common/listener"
+	sbListener "github.com/sagernet/sing-box/common/listener"
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/common/uot"
 	C "github.com/sagernet/sing-box/constant"
@@ -139,6 +140,7 @@ func (h *inboundHandler) NewConnectionEx(ctx context.Context, conn net.Conn, sou
 	metadata.InboundDetour = h.listener.ListenOptions().Detour
 	//nolint:staticcheck
 	metadata.Source = source
+	metadata.ClientAddr = sbListener.ClientAddrFromContext(ctx)
 	metadata.Destination = destination.Unwrap()
 	if userName, _ := auth.UserFromContext[string](ctx); userName != "" {
 		metadata.User = userName

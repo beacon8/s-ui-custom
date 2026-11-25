@@ -29,6 +29,8 @@ export interface Client {
   createdAt?: number
   onlineAt?: number
   maxConns?: number
+  // Distinct client IPs the user may use at once (0 = unlimited)
+  ipLimit?: number
   upMbps?: number
   downMbps?: number
 }
@@ -55,6 +57,7 @@ const defaultClient: Client = {
   createdAt: 0,
   onlineAt: 0,
   maxConns: 0,
+  ipLimit: 0,
   upMbps: 0,
   downMbps: 0,
 }

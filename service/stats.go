@@ -300,6 +300,44 @@ func (s *StatsService) GetConnections() map[string]int {
 	return tracker.ActiveConnections()
 }
 
+// GetActiveIPCounts returns the number of distinct client IPs each user is
+// using right now. It rides the same /api/load payload as connections.
+func (s *StatsService) GetActiveIPCounts() map[string]int {
+	if corePtr == nil || !corePtr.IsRunning() {
+		return map[string]int{}
+	}
+	box := corePtr.GetInstance()
+	if box == nil {
+		return map[string]int{}
+	}
+	tracker := box.SessionTracker()
+	if tracker == nil {
+		return map[string]int{}
+	}
+	return tracker.ActiveIPCounts()
+}
+
+// GetUserIPs lists one user's distinct client IPs with their live session
+// counts and limits.
+func (s *StatsService) GetUserIPs(user string) (core.UserIPSummary, error) {
+	summary := core.UserIPSummary{IPs: []core.UserIPInfo{}}
+	if user == "" {
+		return summary, nil
+	}
+	if corePtr == nil || !corePtr.IsRunning() {
+		return summary, nil
+	}
+	box := corePtr.GetInstance()
+	if box == nil {
+		return summary, nil
+	}
+	tracker := box.SessionTracker()
+	if tracker == nil {
+		return summary, nil
+	}
+	return tracker.UserIPs(user), nil
+}
+
 // GetSessions lists the live routed connections, narrowed to one user, inbound
 // or outbound. Sorted newest first so the panel shows fresh connections on top.
 func (s *StatsService) GetSessions(resource string, tag string) ([]core.SessionInfo, error) {

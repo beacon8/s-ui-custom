@@ -57,6 +57,10 @@ type Client struct {
 	// Connection limit (0 = unlimited)
 	MaxConns int `json:"maxConns" form:"maxConns" gorm:"default:0;not null"`
 
+	// IP limit: number of distinct client IPs this user may use at once
+	// (0 = unlimited). IPv6 addresses are grouped by prefix, not per address.
+	IPLimit int `json:"ipLimit" form:"ipLimit" gorm:"default:0;not null"`
+
 	// Per-client bandwidth limits in Mbps (0 = unlimited)
 	UpMbps   int `json:"upMbps" form:"upMbps" gorm:"default:0;not null"`
 	DownMbps int `json:"downMbps" form:"downMbps" gorm:"default:0;not null"`

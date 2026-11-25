@@ -225,3 +225,5 @@ require (
 	lukechampine.com/blake3 v1.4.1 // indirect
 	zombiezen.com/go/capnproto2 v2.18.2+incompatible // indirect
 )
+
+replace github.com/sagernet/sing-box => github.com/beacon8/sing-box v1.14.4-sui.2

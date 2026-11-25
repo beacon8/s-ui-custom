@@ -223,6 +223,55 @@
           :md="8"
         >
           <a-form-item
+            :label="$t('setting.ipv4Prefix')"
+            :extra="$t('setting.ipv4PrefixHint')"
+            style="margin-bottom: 0;"
+          >
+            <a-input-number
+              v-model:value="ipv4Prefix"
+              :min="1"
+              :max="32"
+              style="width: 100%;"
+            />
+          </a-form-item>
+        </a-col>
+        <a-col
+          :xs="24"
+          :sm="12"
+          :md="8"
+        >
+          <a-form-item
+            :label="$t('setting.ipv6Prefix')"
+            :extra="$t('setting.ipv6PrefixHint')"
+            style="margin-bottom: 0;"
+          >
+            <a-input-number
+              v-model:value="ipv6Prefix"
+              :min="1"
+              :max="128"
+              style="width: 100%;"
+            />
+          </a-form-item>
+        </a-col>
+        <a-col
+          :xs="24"
+          :sm="12"
+          :md="8"
+        >
+          <a-form-item
+            :label="$t('setting.ipLimitDryRun')"
+            :extra="$t('setting.ipLimitDryRunHint')"
+            style="margin-bottom: 0;"
+          >
+            <a-switch v-model:checked="ipLimitDryRun" />
+          </a-form-item>
+        </a-col>
+        <a-col
+          :xs="24"
+          :sm="12"
+          :md="8"
+        >
+          <a-form-item
             :label="$t('setting.timeLoc')"
             style="margin-bottom: 0;"
           >
@@ -470,6 +519,9 @@ const settings = ref({
   sessionMaxAge: "0",
   trafficAge: "30",
   statsBucketSeconds: "60",
+  ipv4Prefix: "32",
+  ipv6Prefix: "64",
+  ipLimitDryRun: "false",
   timeLocation: "Asia/Tehran",
   subListen: "",
   subPort: "2096",
@@ -614,6 +666,21 @@ const trafficAge = computed({
 const statsBucketSeconds = computed({
   get: () => { return settings.value.statsBucketSeconds.length > 0 ? parseInt(settings.value.statsBucketSeconds) : 60 },
   set: (v: number | null) => { settings.value.statsBucketSeconds = v && v > 0 ? v.toString() : "60" }
+})
+
+const ipv4Prefix = computed({
+  get: () => parseInt(settings.value.ipv4Prefix) || 32,
+  set: (v: number | null) => { settings.value.ipv4Prefix = v && v > 0 ? Math.min(v, 32).toString() : "32" }
+})
+
+const ipv6Prefix = computed({
+  get: () => parseInt(settings.value.ipv6Prefix) || 64,
+  set: (v: number | null) => { settings.value.ipv6Prefix = v && v > 0 ? Math.min(v, 128).toString() : "64" }
+})
+
+const ipLimitDryRun = computed({
+  get: () => settings.value.ipLimitDryRun === "true",
+  set: (v: boolean) => { settings.value.ipLimitDryRun = v ? "true" : "false" }
 })
 
 const subPort = computed({

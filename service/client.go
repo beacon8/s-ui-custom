@@ -41,7 +41,7 @@ func (s *ClientService) GetAll() (*[]model.Client, error) {
 	db := database.GetDB()
 	var clients []model.Client
 	err := db.Model(model.Client{}).
-		Select("`id`, `enable`, `name`, `desc`, `group`, `remark`, `inbounds`, `up`, `down`, `volume`, `expiry`, `created_at`, `online_at`, `max_conns`, `up_mbps`, `down_mbps`").
+		Select("`id`, `enable`, `name`, `desc`, `group`, `remark`, `inbounds`, `up`, `down`, `volume`, `expiry`, `created_at`, `online_at`, `max_conns`, `ip_limit`, `up_mbps`, `down_mbps`").
 		Scan(&clients).Error
 	if err != nil {
 		return nil, err
@@ -71,6 +71,51 @@ func (s *ClientService) GetMaxConnsMap(db *gorm.DB) (map[string]int, error) {
 		limits[row.Name] = row.MaxConns
 	}
 	return limits, nil
+}
+
+// GetIPLimitMap returns the distinct-IP limits by client name for all clients
+// that have a positive limit.
+func (s *ClientService) GetIPLimitMap(db *gorm.DB) (map[string]int, error) {
+	if db == nil {
+		db = database.GetDB()
+	}
+	var rows []struct {
+		Name    string
+		IPLimit int
+	}
+	err := db.Model(model.Client{}).
+		Select("`name`, `ip_limit`").
+		Where("`ip_limit` > 0").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	limits := make(map[string]int, len(rows))
+	for _, row := range rows {
+		limits[row.Name] = row.IPLimit
+	}
+	return limits, nil
+}
+
+func clientIPLimitPresent(raw json.RawMessage) bool {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return true
+	}
+	_, present := fields["ipLimit"]
+	return present
+}
+
+// preserveMissingIPLimit keeps the stored limit when a caller that predates
+// the field omits it. Sending an explicit 0 clears it.
+func (s *ClientService) preserveMissingIPLimit(tx *gorm.DB, client *model.Client, raw json.RawMessage) {
+	if clientIPLimitPresent(raw) {
+		return
+	}
+	var existing model.Client
+	if err := tx.Select("id", "ip_limit").First(&existing, client.Id).Error; err == nil {
+		client.IPLimit = existing.IPLimit
+	}
 }
 
 // GetRateLimitsMap returns the non-zero bandwidth caps by client name. The
@@ -237,6 +282,12 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 		if client.MaxConns < 0 {
 			client.MaxConns = 0
 		}
+		if client.IPLimit < 0 {
+			client.IPLimit = 0
+		}
+		if act == "edit" {
+			s.preserveMissingIPLimit(tx, &client, data)
+		}
 		if err = validateClientRates(&client); err != nil {
 			return nil, err
 		}
@@ -283,6 +334,9 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 			if client.MaxConns < 0 {
 				client.MaxConns = 0
 			}
+			if client.IPLimit < 0 {
+				client.IPLimit = 0
+			}
 			if err = validateClientRates(client); err != nil {
 				return nil, err
 			}
@@ -322,6 +376,9 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 			}
 			if client.MaxConns < 0 {
 				client.MaxConns = 0
+			}
+			if client.IPLimit < 0 {
+				client.IPLimit = 0
 			}
 			if err = validateClientRates(client); err != nil {
 				return nil, err

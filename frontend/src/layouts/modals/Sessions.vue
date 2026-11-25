@@ -73,9 +73,19 @@
             </a-tooltip>
           </template>
           <template v-else-if="column.key === 'source'">
-            <a-tooltip :title="record.source">
-              <span class="session-truncate session-addr">{{ record.source }}</span>
+            <a-tooltip>
+              <template #title>
+                {{ record.client || record.source }}
+                <template v-if="record.client && record.client != record.source">
+                  <br>{{ $t('sessions.via', { source: record.source }) }}
+                </template>
+              </template>
+              <span class="session-truncate session-addr">{{ record.client || record.source }}</span>
             </a-tooltip>
+            <span
+              v-if="record.client && record.client != record.source"
+              class="session-via"
+            >{{ $t('sessions.via', { source: record.source }) }}</span>
           </template>
           <template v-else-if="column.key === 'destination'">
             <a-tooltip>
@@ -150,6 +160,9 @@ interface Session {
   outbound?: string
   network?: string
   source?: string
+  // Verified client address from a trusted relay; equal to source for direct
+  // clients.
+  client?: string
   // Omitted by the backend only when empty, which a live session never is.
   destination: string
   domain?: string
@@ -266,5 +279,17 @@ watch(autoRefresh, (v) => {
 }
 .session-tag {
   max-width: 90px;
+}
+/* Second line under the client address: where the connection actually came
+   from when a relay supplied the real client address. */
+.session-via {
+  display: block;
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1.2;
+  opacity: 0.65;
 }
 </style>

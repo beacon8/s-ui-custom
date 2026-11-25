@@ -5,12 +5,15 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/netip"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/alireza0/s-ui/database/model"
+	"github.com/alireza0/s-ui/logger"
 	"github.com/alireza0/s-ui/util/rateconv"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -108,12 +111,15 @@ const (
 // wired into the aggregate maps below, so draining stats never has to walk the
 // session list and traffic of a session that closed mid-cycle is not lost.
 type Session struct {
-	ID          uint64
-	Inbound     string
-	User        string
-	Outbound    string
-	Network     string
-	Source      M.Socksaddr
+	ID       uint64
+	Inbound  string
+	User     string
+	Outbound string
+	Network  string
+	Source   M.Socksaddr
+	// Client is the verified client address when a trusted relay supplied
+	// one; otherwise it is Source.
+	Client      M.Socksaddr
 	Destination M.Socksaddr
 	// Domain is the name the connection is really for: what the client asked
 	// for, or what sniffing found when the client only sent an address.
@@ -125,6 +131,7 @@ type Session struct {
 
 	closer io.Closer
 	rate   *userRate
+	ipKey  netip.Prefix
 }
 
 // SessionInfo is the snapshot handed to the API; the live atomics stay inside.
@@ -135,12 +142,34 @@ type SessionInfo struct {
 	Outbound    string `json:"outbound,omitempty"`
 	Network     string `json:"network,omitempty"`
 	Source      string `json:"source,omitempty"`
+	Client      string `json:"client,omitempty"`
 	Destination string `json:"destination,omitempty"`
 	Domain      string `json:"domain,omitempty"`
 	Rule        string `json:"rule,omitempty"`
 	CreatedAt   int64  `json:"createdAt"`
 	Upload      int64  `json:"up"`
 	Download    int64  `json:"down"`
+}
+
+// userIPState is one distinct client IP of a user. sessions is the number of
+// live routed connections using it; since is when the first of them arrived.
+type userIPState struct {
+	sessions int
+	since    time.Time
+}
+
+// UserIPInfo is one entry of the per-user IP list.
+type UserIPInfo struct {
+	IP       string `json:"ip"`
+	Sessions int    `json:"sessions"`
+	Since    int64  `json:"since"`
+}
+
+// UserIPSummary is the response of the per-user IP endpoint.
+type UserIPSummary struct {
+	Count int          `json:"count"`
+	Limit int          `json:"limit"`
+	IPs   []UserIPInfo `json:"ips"`
 }
 
 var _ adapter.ConnectionTracker = (*SessionTracker)(nil)
@@ -157,6 +186,12 @@ type SessionTracker struct {
 	userLimits map[string]int
 	userConns  map[string]int
 	userRates  map[string]*userRate
+
+	userIPLimits  map[string]int
+	userIPs       map[string]map[netip.Prefix]*userIPState
+	ipv4PrefixLen int
+	ipv6PrefixLen int
+	ipLimitDryRun bool
 	// nextID only has to be unique among live sessions, so it is a counter
 	// rather than a UUID: this runs on every connection.
 	nextID uint64
@@ -164,14 +199,88 @@ type SessionTracker struct {
 
 func NewSessionTracker() *SessionTracker {
 	return &SessionTracker{
-		inbounds:   make(map[string]Counter),
-		outbounds:  make(map[string]Counter),
-		users:      make(map[string]Counter),
-		sessions:   make(map[uint64]*Session),
-		userLimits: make(map[string]int),
-		userConns:  make(map[string]int),
-		userRates:  make(map[string]*userRate),
+		inbounds:      make(map[string]Counter),
+		outbounds:     make(map[string]Counter),
+		users:         make(map[string]Counter),
+		sessions:      make(map[uint64]*Session),
+		userLimits:    make(map[string]int),
+		userConns:     make(map[string]int),
+		userRates:     make(map[string]*userRate),
+		userIPLimits:  make(map[string]int),
+		userIPs:       make(map[string]map[netip.Prefix]*userIPState),
+		ipv4PrefixLen: 32,
+		ipv6PrefixLen: 64,
 	}
+}
+
+// SetUserIPLimits replaces the per-user distinct-IP limits. A limit <= 0
+// means unlimited. Lowering a limit never evicts an IP that is already online:
+// only a new IP is refused.
+func (t *SessionTracker) SetUserIPLimits(limits map[string]int) {
+	copied := make(map[string]int, len(limits))
+	for user, limit := range limits {
+		if user != "" && limit > 0 {
+			copied[user] = limit
+		}
+	}
+	t.access.Lock()
+	t.userIPLimits = copied
+	t.access.Unlock()
+}
+
+// SetIPPrefixes sets how addresses are collapsed into one IP. IPv4 defaults to
+// /32 and IPv6 to /64 (one subscriber), so a rotating address inside the same
+// IPv6 prefix is not counted as a new IP.
+func (t *SessionTracker) SetIPPrefixes(ipv4PrefixLen, ipv6PrefixLen int) {
+	t.access.Lock()
+	defer t.access.Unlock()
+	if ipv4PrefixLen > 0 && ipv4PrefixLen <= 32 {
+		t.ipv4PrefixLen = ipv4PrefixLen
+	}
+	if ipv6PrefixLen > 0 && ipv6PrefixLen <= 128 {
+		t.ipv6PrefixLen = ipv6PrefixLen
+	}
+}
+
+// SetIPLimitDryRun only logs a would-be rejection; the connection is admitted
+// and the IP is counted.
+func (t *SessionTracker) SetIPLimitDryRun(enabled bool) {
+	t.access.Lock()
+	t.ipLimitDryRun = enabled
+	t.access.Unlock()
+}
+
+// ActiveIPCounts returns the number of distinct IPs per user with a live
+// session, for the client list.
+func (t *SessionTracker) ActiveIPCounts() map[string]int {
+	t.access.Lock()
+	defer t.access.Unlock()
+	counts := make(map[string]int, len(t.userIPs))
+	for user, ips := range t.userIPs {
+		if len(ips) > 0 {
+			counts[user] = len(ips)
+		}
+	}
+	return counts
+}
+
+// UserIPs lists the distinct IPs of one user, newest first.
+func (t *SessionTracker) UserIPs(user string) UserIPSummary {
+	t.access.Lock()
+	summary := UserIPSummary{Limit: t.userIPLimits[user], IPs: []UserIPInfo{}}
+	for prefix, state := range t.userIPs[user] {
+		summary.IPs = append(summary.IPs, UserIPInfo{
+			IP:       prefix.String(),
+			Sessions: state.sessions,
+			Since:    state.since.Unix(),
+		})
+	}
+	t.access.Unlock()
+	summary.Count = len(summary.IPs)
+	sort.Slice(summary.IPs, func(i, j int) bool {
+		return summary.IPs[i].Since > summary.IPs[j].Since
+	})
+	return summary
 }
 
 // SetUserLimits replaces the per-user concurrent connection limits.
@@ -507,6 +616,79 @@ func (c *ratePacketConn) PacketConnHandshakeSuccess(conn net.PacketConn) error {
 	return N.ReportPacketConnHandshakeSuccess(c.PacketConn, conn)
 }
 
+// ipKeyLocked collapses a client address into the prefix used for counting.
+// The caller must hold access.
+func (t *SessionTracker) ipKeyLocked(addr M.Socksaddr) netip.Prefix {
+	if !addr.IsValid() || !addr.Addr.IsValid() {
+		return netip.Prefix{}
+	}
+	ip := addr.Addr.Unmap()
+	bits := 32
+	prefixLen := t.ipv4PrefixLen
+	if ip.Is6() {
+		bits = 128
+		prefixLen = t.ipv6PrefixLen
+	}
+	if prefixLen < 0 || prefixLen > bits {
+		prefixLen = bits
+	}
+	return netip.PrefixFrom(ip, prefixLen).Masked()
+}
+
+func (t *SessionTracker) trackIPLocked(session *Session) {
+	if session.User == "" || !session.ipKey.IsValid() {
+		return
+	}
+	ips := t.userIPs[session.User]
+	if ips == nil {
+		ips = make(map[netip.Prefix]*userIPState)
+		t.userIPs[session.User] = ips
+	}
+	state := ips[session.ipKey]
+	if state == nil {
+		state = &userIPState{since: time.Now()}
+		ips[session.ipKey] = state
+	}
+	state.sessions++
+}
+
+func (t *SessionTracker) releaseIPLocked(session *Session) {
+	if session.User == "" || !session.ipKey.IsValid() {
+		return
+	}
+	ips := t.userIPs[session.User]
+	if ips == nil {
+		return
+	}
+	state := ips[session.ipKey]
+	if state == nil {
+		return
+	}
+	state.sessions--
+	if state.sessions <= 0 {
+		delete(ips, session.ipKey)
+	}
+	if len(ips) == 0 {
+		delete(t.userIPs, session.User)
+	}
+}
+
+func formatIPKeys(ips map[netip.Prefix]*userIPState) string {
+	keys := make([]string, 0, len(ips))
+	for prefix := range ips {
+		keys = append(keys, prefix.String())
+	}
+	sort.Strings(keys)
+	result := ""
+	for i, key := range keys {
+		if i > 0 {
+			result += ", "
+		}
+		result += key
+	}
+	return result
+}
+
 func (t *SessionTracker) loadOrCreateCounter(obj map[string]Counter, name string) Counter {
 	counter, loaded := obj[name]
 	if loaded {
@@ -528,12 +710,17 @@ func (t *SessionTracker) newSession(metadata adapter.InboundContext, matchedRule
 	if outbound == "" && matchOutbound != nil {
 		outbound = matchOutbound.Tag()
 	}
+	client := metadata.ClientAddr
+	if !client.IsValid() {
+		client = metadata.Source
+	}
 	session := &Session{
 		Inbound:     metadata.Inbound,
 		User:        metadata.User,
 		Outbound:    outbound,
 		Network:     network,
 		Source:      metadata.Source,
+		Client:      client,
 		Destination: metadata.Destination,
 		CreatedAt:   time.Now(),
 		Upload:      &atomic.Int64{},
@@ -560,6 +747,22 @@ func (t *SessionTracker) newSession(metadata adapter.InboundContext, matchedRule
 		if limit := t.userLimits[session.User]; limit > 0 && t.userConns[session.User] >= limit {
 			return nil, nil, nil
 		}
+		session.ipKey = t.ipKeyLocked(session.Client)
+		if limit := t.userIPLimits[session.User]; limit > 0 && session.ipKey.IsValid() {
+			ips := t.userIPs[session.User]
+			if _, exists := ips[session.ipKey]; !exists && len(ips) >= limit {
+				message := []any{"client ", session.User, " IP limit ", limit, ": refusing new IP ", session.ipKey}
+				if len(ips) > 0 {
+					message = append(message, ", online IPs: ", formatIPKeys(ips))
+				}
+				if t.ipLimitDryRun {
+					logger.Warning(append(message, " (dry run)")...)
+				} else {
+					logger.Warning(message...)
+					return nil, nil, nil
+				}
+			}
+		}
 	}
 	t.nextID++
 	session.ID = t.nextID
@@ -579,6 +782,7 @@ func (t *SessionTracker) newSession(metadata adapter.InboundContext, matchedRule
 		writeCounter = append(writeCounter, counter.write)
 		t.userConns[session.User]++
 		session.rate = t.rateStateLocked(session.User)
+		t.trackIPLocked(session)
 	}
 	t.sessions[session.ID] = session
 	return session, readCounter, writeCounter
@@ -597,6 +801,7 @@ func (t *SessionTracker) leave(session *Session) {
 		} else {
 			delete(t.userConns, session.User)
 		}
+		t.releaseIPLocked(session)
 	}
 }
 
@@ -707,6 +912,7 @@ func (t *SessionTracker) Sessions() []SessionInfo {
 			Outbound:    session.Outbound,
 			Network:     session.Network,
 			Source:      session.Source.String(),
+			Client:      session.Client.String(),
 			Destination: session.Destination.String(),
 			Domain:      session.Domain,
 			Rule:        session.Rule,
@@ -735,6 +941,7 @@ func (t *SessionTracker) takeSessions(match func(*Session) bool) []io.Closer {
 			} else {
 				delete(t.userConns, session.User)
 			}
+			t.releaseIPLocked(session)
 		}
 		if session.closer != nil {
 			closers = append(closers, session.closer)

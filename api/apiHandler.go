@@ -99,6 +99,8 @@ func (a *APIHandler) getHandler(c *gin.Context) {
 		a.ApiService.GetOnlines(c)
 	case "sessions":
 		a.ApiService.GetSessions(c)
+	case "userIps":
+		a.ApiService.GetUserIps(c)
 	case "logs":
 		a.ApiService.GetLogs(c)
 	case "changes":

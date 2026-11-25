@@ -214,6 +214,24 @@
                 <div class="inline-hint">
                   {{ $t('client.rateHint') }}
                 </div>
+                <a-row :gutter="[16, 16]">
+                  <a-col
+                    :xs="24"
+                    :sm="8"
+                  >
+                    <a-form-item
+                      :label="$t('client.ipLimit')"
+                      :extra="$t('client.ipLimitHint')"
+                    >
+                      <a-input-number
+                        v-model:value="ipLimit"
+                        :min="0"
+                        :placeholder="$t('unlimited')"
+                        style="width: 100%"
+                      />
+                    </a-form-item>
+                  </a-col>
+                </a-row>
 
                 <!-- 已有客户端的只读用量摘要 -->
                 <div
@@ -632,6 +650,10 @@ export default {
     maxConns: {
       get() { return this.client.maxConns ?? 0 },
       set(v:number) { this.client.maxConns = v > 0 ? Math.floor(v) : 0 }
+    },
+    ipLimit: {
+      get() { return this.client.ipLimit ?? 0 },
+      set(v: number | null) { this.client.ipLimit = v && v > 0 ? Math.floor(v) : 0 }
     },
     upMbps: {
       get() { return this.client.upMbps ?? 0 },

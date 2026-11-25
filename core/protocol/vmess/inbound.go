@@ -10,6 +10,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/inbound"
 	"github.com/sagernet/sing-box/common/listener"
+	sbListener "github.com/sagernet/sing-box/common/listener"
 	"github.com/sagernet/sing-box/common/mux"
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/common/uot"
@@ -226,6 +227,7 @@ type inboundTransportHandler Inbound
 func (h *inboundTransportHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
 	var metadata adapter.InboundContext
 	metadata.Source = source
+	metadata.ClientAddr = sbListener.ClientAddrFromContext(ctx)
 	metadata.Destination = destination
 	//nolint:staticcheck
 	metadata.InboundDetour = h.listener.ListenOptions().Detour

@@ -28,6 +28,8 @@ export interface LoadedData {
   // Live routed connection counts by client name. Separate from onlines: an
   // idle but connected client is counted here even without recent traffic.
   connections?: Record<string, number>
+  // Distinct client IPs per user, refreshed with connections on every poll.
+  ipCounts?: Record<string, number>
   maintenance?: boolean
   lastLog?: string
   subURI?: string
@@ -73,6 +75,7 @@ const Data = defineStore('Data', {
     updateVisible: false,
     onlines: <Onlines>{inbound: [], outbound: [], user: []},
     connections: <Record<string, number>>{},
+    ipCounts: <Record<string, number>>{},
     config: <Config>{},
     inbounds: <Inbound[]>[],
     outbounds: <Outbound[]>[],
@@ -87,6 +90,7 @@ const Data = defineStore('Data', {
       if(msg.success) {
         if (msg.obj.onlines) this.onlines = msg.obj.onlines
         if (msg.obj.connections) this.connections = msg.obj.connections
+        if (msg.obj.ipCounts) this.ipCounts = msg.obj.ipCounts
         this.maintenance = msg.obj.maintenance ?? false
         if (msg.obj.lastLog) {
           push.error({
@@ -114,6 +118,7 @@ const Data = defineStore('Data', {
       // the page was reloaded.
       if (Object.hasOwn(data, 'enableTraffic')) this.enableTraffic = data.enableTraffic ?? false
       if (Object.hasOwn(data, 'connections')) this.connections = data.connections ?? {}
+      if (Object.hasOwn(data, 'ipCounts')) this.ipCounts = data.ipCounts ?? {}
       if (data.config) this.config = data.config
       if (Object.hasOwn(data, 'clients')) this.clients = data.clients ?? []
       if (Object.hasOwn(data, 'inbounds')) this.inbounds = data.inbounds ?? []

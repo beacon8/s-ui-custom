@@ -3,10 +3,13 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/alireza0/s-ui/core"
 	"github.com/alireza0/s-ui/database"
 	"github.com/alireza0/s-ui/database/model"
 	"github.com/alireza0/s-ui/logger"
@@ -63,6 +66,9 @@ func (s *InboundService) GetAll() (*[]map[string]interface{}, error) {
 			"enable": inbound.Enable,
 			"tls_id": inbound.TlsId,
 		}
+		if len(inbound.ProxyProtocol) > 0 {
+			inbData["proxyProtocol"] = inbound.ProxyProtocol
+		}
 		if inbound.Options != nil {
 			var restFields map[string]json.RawMessage
 			if err := json.Unmarshal(inbound.Options, &restFields); err != nil {
@@ -103,6 +109,102 @@ func (s *InboundService) FromIds(ids []uint) ([]*model.Inbound, error) {
 	return inbounds, nil
 }
 
+// proxyProtocolOptions is the panel-side shape stored on the inbound row. It
+// is deliberately not part of the sing-box JSON.
+type proxyProtocolOptions struct {
+	Enabled       bool     `json:"enabled"`
+	TrustedCidrs  []string `json:"trustedCidrs"`
+	HeaderTimeout int      `json:"headerTimeout"`
+}
+
+func parseProxyProtocolOptions(raw json.RawMessage) (proxyProtocolOptions, []netip.Prefix, error) {
+	var options proxyProtocolOptions
+	if len(raw) == 0 || string(raw) == "null" {
+		return options, nil, nil
+	}
+	if err := json.Unmarshal(raw, &options); err != nil {
+		return options, nil, common.NewErrorf("proxyProtocol: %v", err)
+	}
+	if options.HeaderTimeout < 0 {
+		return options, nil, common.NewError("proxyProtocol.headerTimeout must not be negative")
+	}
+	trusted := make([]netip.Prefix, 0, len(options.TrustedCidrs))
+	for _, cidr := range options.TrustedCidrs {
+		cidr = strings.TrimSpace(cidr)
+		if cidr == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(cidr)
+		if err != nil {
+			return options, nil, common.NewErrorf("proxyProtocol: invalid trusted CIDR %q", cidr)
+		}
+		trusted = append(trusted, prefix.Masked())
+	}
+	if options.Enabled && len(trusted) == 0 {
+		return options, nil, common.NewError("proxyProtocol: at least one trusted CIDR is required when enabled")
+	}
+	return options, trusted, nil
+}
+
+func proxyProtocolFieldPresent(data json.RawMessage) bool {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return false
+	}
+	_, present := fields["proxyProtocol"]
+	return present
+}
+
+// GetProxyProtocolPolicies builds the listen-port keyed policy the connection
+// preprocessor reads. Invalid rows are logged and skipped: one bad inbound
+// must not stop the listed ones from protecting their users.
+func (s *InboundService) GetProxyProtocolPolicies(db *gorm.DB) (map[uint16]core.ProxyProtocolConfig, error) {
+	if db == nil {
+		db = database.GetDB()
+	}
+	var inbounds []model.Inbound
+	if err := db.Model(model.Inbound{}).Where("enable = ?", true).Find(&inbounds).Error; err != nil {
+		return nil, err
+	}
+	policies := make(map[uint16]core.ProxyProtocolConfig)
+	for _, inbound := range inbounds {
+		if len(inbound.ProxyProtocol) == 0 {
+			continue
+		}
+		options, trusted, err := parseProxyProtocolOptions(inbound.ProxyProtocol)
+		if err != nil {
+			logger.Warning("inbound ", inbound.Tag, ": ", err)
+			continue
+		}
+		if !options.Enabled {
+			continue
+		}
+		var rawOptions map[string]json.RawMessage
+		if err = json.Unmarshal(inbound.Options, &rawOptions); err != nil {
+			logger.Warning("inbound ", inbound.Tag, ": read options: ", err)
+			continue
+		}
+		var listenPort int
+		if rawPort, loaded := rawOptions["listen_port"]; loaded {
+			if err = json.Unmarshal(rawPort, &listenPort); err != nil {
+				logger.Warning("inbound ", inbound.Tag, ": invalid listen_port: ", err)
+				continue
+			}
+		}
+		if listenPort < 1 || listenPort > 65535 {
+			logger.Warning("inbound ", inbound.Tag, ": proxyProtocol needs a valid listen_port")
+			continue
+		}
+		policies[uint16(listenPort)] = core.ProxyProtocolConfig{
+			Enabled:       true,
+			InboundTag:    inbound.Tag,
+			Trusted:       trusted,
+			HeaderTimeout: time.Duration(options.HeaderTimeout) * time.Second,
+		}
+	}
+	return policies, nil
+}
+
 func (s *InboundService) Save(tx *gorm.DB, act string, data json.RawMessage, initUserIds string, hostname string) error {
 	var err error
 
@@ -125,6 +227,15 @@ func (s *InboundService) Save(tx *gorm.DB, act string, data json.RawMessage, ini
 			if err != nil {
 				return err
 			}
+			if !proxyProtocolFieldPresent(data) {
+				var existing model.Inbound
+				if err = tx.Select("proxy_protocol").First(&existing, inbound.Id).Error; err == nil {
+					inbound.ProxyProtocol = existing.ProxyProtocol
+				}
+			}
+		}
+		if _, _, err = parseProxyProtocolOptions(inbound.ProxyProtocol); err != nil {
+			return err
 		}
 
 		if corePtr.IsRunning() {

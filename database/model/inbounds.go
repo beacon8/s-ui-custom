@@ -17,6 +17,11 @@ type Inbound struct {
 	Addrs   json.RawMessage `json:"addrs" form:"addrs"`
 	OutJson json.RawMessage `json:"out_json" form:"out_json"`
 	Options json.RawMessage `json:"-" form:"-"`
+
+	// ProxyProtocol is panel-side policy: it never reaches the sing-box
+	// config, because sing-box rejects unknown inbound fields. A nil value
+	// means the inbound does not accept a PROXY header.
+	ProxyProtocol json.RawMessage `json:"proxyProtocol,omitempty" form:"proxyProtocol"`
 }
 
 func (i *Inbound) UnmarshalJSON(data []byte) error {
@@ -58,6 +63,13 @@ func (i *Inbound) UnmarshalJSON(data []byte) error {
 	i.OutJson, _ = json.MarshalIndent(raw["out_json"], "", "  ")
 	delete(raw, "out_json")
 
+	// ProxyProtocol is stored on its own column so MarshalJSON can leave it
+	// out of the sing-box config.
+	if val, exists := raw["proxyProtocol"]; exists && val != nil {
+		i.ProxyProtocol, _ = json.MarshalIndent(val, "", "  ")
+	}
+	delete(raw, "proxyProtocol")
+
 	// Remaining fields
 	i.Options, err = json.MarshalIndent(raw, "", "  ")
 	return err
@@ -96,6 +108,12 @@ func (i Inbound) MarshalFull() (*map[string]interface{}, error) {
 	combined["tls_id"] = i.TlsId
 	combined["addrs"] = i.Addrs
 	combined["out_json"] = i.OutJson
+	if len(i.ProxyProtocol) > 0 {
+		var proxyProtocol interface{}
+		if err := json.Unmarshal(i.ProxyProtocol, &proxyProtocol); err == nil {
+			combined["proxyProtocol"] = proxyProtocol
+		}
+	}
 
 	if i.Options != nil {
 		var restFields map[string]interface{}

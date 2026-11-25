@@ -62,6 +62,16 @@ interface InboundBasics extends Listen {
   addrs?: Addr[]
   // The outbound block a client link is built from, shaped by protocol.
   out_json?: Record<string, unknown>
+  // Panel-side policy: trusted relays may prefix each connection with a
+  // HAProxy PROXY header. Not part of the sing-box config.
+  proxyProtocol?: ProxyProtocol
+}
+
+export interface ProxyProtocol {
+  enabled: boolean
+  trustedCidrs: string[]
+  // Seconds; 0 asks the backend for its default (5s).
+  headerTimeout: number
 }
 
 interface ShadowTLSHandShake extends Dial {

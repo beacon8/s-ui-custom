@@ -82,6 +82,10 @@
             :data="inbound"
             :in-tags="inTags"
           />
+          <ProxyProtocolOptions
+            v-if="ProxyProtocolTypes.includes(inbound.type)"
+            :data="inbound"
+          />
           <Direct
             v-if="inbound.type == inTypes.Direct"
             :data="inbound"
@@ -278,6 +282,7 @@ import InTls from '@/components/tls/InTLS.vue'
 import TProxy from '@/components/protocols/TProxy.vue'
 import Multiplex from '@/components/Multiplex.vue'
 import Transport from '@/components/Transport.vue'
+import ProxyProtocolOptions from '@/components/ProxyProtocol.vue'
 import AddrVue from '@/components/Addr.vue'
 import OutJsonVue from '@/components/OutJson.vue'
 import Data from '@/store/modules/data'
@@ -286,7 +291,8 @@ export default {
     DocLink,
     Listen, InTls, Hysteria2, Naive, Direct, Shadowsocks,
     Users, Hysteria, ShadowTls, TProxy, Multiplex, Tuic, Tun,
-    AnyTls, Transport, AddrVue, OutJsonVue, Dial, Snell, Cloudflared
+    AnyTls, Transport, AddrVue, OutJsonVue, Dial, Snell, Cloudflared,
+    ProxyProtocolOptions
   },
   props: {
     visible: { type: Boolean, required: true },
@@ -344,6 +350,21 @@ export default {
       // tun brings its own interface options; cloudflared dials out to the
       // Cloudflare edge and sing-box rejects listen fields on it.
       NoListen: [InTypes.Tun, InTypes.Cloudflared],
+      // PROXY protocol is read from the TCP listener, so only inbounds with a
+      // TCP accept path can use it.
+      ProxyProtocolTypes: [
+        InTypes.Mixed,
+        InTypes.SOCKS,
+        InTypes.HTTP,
+        InTypes.Shadowsocks,
+        InTypes.Snell,
+        InTypes.VMess,
+        InTypes.Trojan,
+        InTypes.Naive,
+        InTypes.ShadowTLS,
+        InTypes.VLESS,
+        InTypes.AnyTls,
+      ],
     }
   },
   computed: {
@@ -352,6 +373,8 @@ export default {
       if (this.inbound.tag == "") return false
       if (this.inbound.listen_port > 65535 || this.inbound.listen_port < 1) return false
       if (this.OnlyTLS.includes(this.inbound.type) && this.inbound.tls_id == 0) return false
+      const proxyProtocol = this.inbound.proxyProtocol
+      if (proxyProtocol?.enabled && (proxyProtocol.trustedCidrs?.length ?? 0) === 0) return false
       return true
     },
     clients() {

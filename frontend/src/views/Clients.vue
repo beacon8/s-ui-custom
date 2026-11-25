@@ -42,6 +42,11 @@
     :tag="sessions.tag"
     @close="closeSessions"
   />
+  <UserIps
+    :visible="ipUser !== null"
+    :user="ipUser ?? ''"
+    @close="ipUser = null"
+  />
   <a-modal
     v-model:open="resetTrafficModal"
     :title="$t('actions.resetTraffic')"
@@ -302,6 +307,17 @@
               </a-tag>
             </a-tooltip>
           </template>
+          <template v-else-if="column.key === 'ips'">
+            <a-tooltip :title="ipHint(record)">
+              <a-tag
+                :color="ipColor(record)"
+                style="cursor: pointer; font-variant-numeric: tabular-nums;"
+                @click="ipUser = record.name"
+              >
+                {{ activeIPs(record.name) }} / {{ ipLimitText(record) }}
+              </a-tag>
+            </a-tooltip>
+          </template>
           <template v-else-if="column.key === 'createdAt'">
             <a-tooltip
               v-if="record.createdAt > 0"
@@ -403,6 +419,7 @@ import ClientEditBulk from '@/layouts/modals/ClientEditBulk.vue'
 import QrCode from '@/layouts/modals/QrCode.vue'
 import Stats from '@/layouts/modals/Stats.vue'
 import Sessions from '@/layouts/modals/Sessions.vue'
+import UserIps from '@/layouts/modals/UserIps.vue'
 import { Client } from '@/types/clients'
 import { Inbound } from '@/types/inbounds'
 import { computed, ref } from 'vue'
@@ -440,6 +457,23 @@ const connColor = (c: ClientRow): string | undefined => {
 const connHint = (c: ClientRow): string => i18n.global.t('client.connectionsHint', {
   current: activeConns(c.name),
   limit: connLimitText(c)
+})
+
+// Distinct client IPs currently used by the client. The backend groups IPv6
+// addresses by /64, so this is the number an ipLimit is compared against.
+const activeIPs = (cname: string): number => Data().ipCounts?.[cname] ?? 0
+const ipLimit = (c: ClientRow): number => (c.ipLimit && c.ipLimit > 0 ? c.ipLimit : 0)
+const ipLimitText = (c: ClientRow): string => ipLimit(c) > 0 ? String(ipLimit(c)) : '∞'
+const ipColor = (c: ClientRow): string | undefined => {
+  const limit = ipLimit(c)
+  const active = activeIPs(c.name)
+  if (limit > 0 && active >= limit) return 'red'
+  if (limit > 0 && active >= Math.ceil(limit * 0.8)) return 'orange'
+  return undefined
+}
+const ipHint = (c: ClientRow): string => i18n.global.t('client.ipHint', {
+  current: activeIPs(c.name),
+  limit: ipLimitText(c)
 })
 
 const inbounds = computed((): Inbound[] => {
@@ -489,6 +523,7 @@ const headers = [
   { title: i18n.global.t('date.expiry'), dataIndex: 'expiry', key: 'expiry', sorter: (a: ClientRow, b: ClientRow) => a.expiry - b.expiry },
   { title: i18n.global.t('online'), key: 'online', sorter: (a: ClientRow, b: ClientRow) => Number(isOnline(a.name).value) - Number(isOnline(b.name).value) },
   { title: i18n.global.t('client.connections'), key: 'connections', sorter: (a: ClientRow, b: ClientRow) => activeConns(a.name) - activeConns(b.name) },
+  { title: i18n.global.t('client.ips'), key: 'ips', sorter: (a: ClientRow, b: ClientRow) => activeIPs(a.name) - activeIPs(b.name) },
   { title: i18n.global.t('date.created'), dataIndex: 'createdAt', key: 'createdAt', sorter: (a: ClientRow, b: ClientRow) => a.createdAt - b.createdAt },
   { title: i18n.global.t('date.lastOnline'), dataIndex: 'onlineAt', key: 'onlineAt', sorter: (a: ClientRow, b: ClientRow) => a.onlineAt - b.onlineAt },
 ]
@@ -582,6 +617,9 @@ const showSessions = (tag: string) => {
 const closeSessions = () => {
   sessions.value.visible = false
 }
+
+// Opening the IP list only needs the client name; the modal loads the rest.
+const ipUser = ref<string | null>(null)
 
 const doFilter = () => {
   let filteredClients = clients.value.slice()

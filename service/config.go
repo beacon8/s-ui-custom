@@ -251,6 +251,7 @@ func (s *ConfigService) startCoreLocked(bypassCooldown bool) error {
 
 	logger.Info("starting core")
 	s.syncUserLimits()
+	s.syncProxyProtocolPolicies()
 	rawConfig, err := s.GetConfig("")
 	if err != nil {
 		return err
@@ -318,6 +319,7 @@ func (s *ConfigService) restartCoreWithConfig(config json.RawMessage) error {
 		return err
 	}
 	s.syncUserLimits()
+	s.syncProxyProtocolPolicies()
 	if err := corePtr.Start(*rawConfig); err != nil {
 		logger.Error("restart sing-box err (start):", err.Error())
 		return err
@@ -344,6 +346,29 @@ func (s *ConfigService) syncUserLimits() {
 	} else {
 		corePtr.SetUserRates(rates)
 	}
+	ipLimits, err := s.ClientService.GetIPLimitMap(database.GetDB())
+	if err != nil {
+		logger.Warning("unable to load client IP limits:", err)
+	} else {
+		corePtr.SetUserIPLimits(ipLimits)
+	}
+	ipv4Prefix, ipv6Prefix := s.SettingService.GetIPPrefixes()
+	corePtr.SetIPOptions(ipv4Prefix, ipv6Prefix, s.SettingService.GetIPLimitDryRun())
+}
+
+// syncProxyProtocolPolicies loads the per-inbound PROXY policy and publishes it
+// to the connection preprocessor. It takes effect on the next accepted
+// connection, so no listener restart is needed.
+func (s *ConfigService) syncProxyProtocolPolicies() {
+	if corePtr == nil {
+		return
+	}
+	policies, err := s.InboundService.GetProxyProtocolPolicies(database.GetDB())
+	if err != nil {
+		logger.Warning("unable to load inbound PROXY policies:", err)
+		return
+	}
+	corePtr.SetProxyProtocolPolicies(policies)
 }
 
 // SetMaintenance takes the core out of service, or puts it back. The setting is
@@ -433,8 +458,16 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 		// Try to start core if it is not running
 		if corePtr != nil && !corePtr.IsRunning() {
 			s.StartCore()
-		} else if obj == "clients" {
-			s.syncUserLimits()
+		} else {
+			if obj == "clients" {
+				s.syncUserLimits()
+			}
+			if obj == "inbounds" {
+				s.syncProxyProtocolPolicies()
+			}
+			if obj == "settings" {
+				s.syncUserLimits()
+			}
 		}
 	}()
 

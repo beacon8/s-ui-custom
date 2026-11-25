@@ -7,6 +7,7 @@ import (
 	"github.com/alireza0/s-ui/util/common"
 
 	sb "github.com/sagernet/sing-box"
+	sbListener "github.com/sagernet/sing-box/common/listener"
 	_ "github.com/sagernet/sing-box/experimental/clashapi"
 	_ "github.com/sagernet/sing-box/experimental/v2rayapi"
 	"github.com/sagernet/sing-box/option"
@@ -28,15 +29,37 @@ type Core struct {
 	userLimits map[string]int
 	userRates  map[string]UserRate
 
+	userIPLimits  map[string]int
+	ipv4PrefixLen int
+	ipv6PrefixLen int
+	ipLimitDryRun bool
+
+	// proxyPolicies is read on every accepted connection, so it lives outside
+	// the box and survives restarts. The context installed below holds a
+	// pointer to it, not a snapshot.
+	proxyPolicies *proxyPolicyStore
+
 	// Carries the protocol registries. Built once in NewCore and never
 	// reassigned, so it needs no lock.
 	ctx context.Context
 }
 
 func NewCore() *Core {
+	policies := newProxyPolicyStore()
 	ctx := sb.Context(context.Background(), InboundRegistry(), OutboundRegistry(),
 		EndpointRegistry(), DNSTransportRegistry(), ServiceRegistry(), CertificateProviderRegistry())
-	return &Core{ctx: ctx}
+	ctx = sbListener.WithConnectionPreprocessor(ctx, newProxyPreprocessor(policies))
+	return &Core{ctx: ctx, proxyPolicies: policies, ipv4PrefixLen: 32, ipv6PrefixLen: 64}
+}
+
+// SetProxyProtocolPolicies replaces the per-listen-port PROXY policy. It takes
+// effect on the next accepted connection; existing connections keep the
+// address they were admitted with.
+func (c *Core) SetProxyProtocolPolicies(policies map[uint16]ProxyProtocolConfig) {
+	if c == nil || c.proxyPolicies == nil {
+		return
+	}
+	c.proxyPolicies.Set(policies)
 }
 
 func (c *Core) GetCtx() context.Context {
@@ -98,6 +121,11 @@ func (c *Core) Start(sbConfig []byte) error {
 		if len(c.userRates) > 0 {
 			tracker.SetUserRates(c.userRates)
 		}
+		if len(c.userIPLimits) > 0 {
+			tracker.SetUserIPLimits(c.userIPLimits)
+		}
+		tracker.SetIPPrefixes(c.ipv4PrefixLen, c.ipv6PrefixLen)
+		tracker.SetIPLimitDryRun(c.ipLimitDryRun)
 	}
 	c.instance = instance
 	c.isRunning = true
@@ -144,6 +172,45 @@ func (c *Core) SetUserLimits(limits map[string]int) {
 
 	if running && instance != nil && instance.SessionTracker() != nil {
 		instance.SessionTracker().SetUserLimits(copied)
+	}
+}
+
+// SetUserIPLimits updates per-user distinct-IP limits both in Core state (so
+// restarts keep them) and on the live SessionTracker immediately.
+func (c *Core) SetUserIPLimits(limits map[string]int) {
+	copied := make(map[string]int, len(limits))
+	for user, limit := range limits {
+		if user != "" && limit > 0 {
+			copied[user] = limit
+		}
+	}
+	c.mu.Lock()
+	c.userIPLimits = copied
+	instance := c.instance
+	running := c.isRunning
+	c.mu.Unlock()
+	if running && instance != nil {
+		if tracker := instance.SessionTracker(); tracker != nil {
+			tracker.SetUserIPLimits(copied)
+		}
+	}
+}
+
+// SetIPOptions updates how IPv4/IPv6 addresses are grouped and whether the IP
+// limit is a dry run. Existing sessions keep the key they were admitted with.
+func (c *Core) SetIPOptions(ipv4PrefixLen, ipv6PrefixLen int, dryRun bool) {
+	c.mu.Lock()
+	c.ipv4PrefixLen = ipv4PrefixLen
+	c.ipv6PrefixLen = ipv6PrefixLen
+	c.ipLimitDryRun = dryRun
+	instance := c.instance
+	running := c.isRunning
+	c.mu.Unlock()
+	if running && instance != nil {
+		if tracker := instance.SessionTracker(); tracker != nil {
+			tracker.SetIPPrefixes(ipv4PrefixLen, ipv6PrefixLen)
+			tracker.SetIPLimitDryRun(dryRun)
+		}
 	}
 }
 
