@@ -1,11 +1,17 @@
 package core
 
 import (
+	"crypto/ecdh"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 )
@@ -335,7 +341,7 @@ func TestProxyProtocolEndToEndTransports(t *testing.T) {
 	}
 }
 
-func runProxyTransportCase(t *testing.T, serverTransport string, clientTransport string) {
+func runProxyTransportCase(t *testing.T, serverTransport string, clientTransport string) SessionInfo {
 	t.Helper()
 	echo := startEchoServer(t)
 	echoAddr := echo.Addr().(*net.TCPAddr)
@@ -429,6 +435,7 @@ func runProxyTransportCase(t *testing.T, serverTransport string, clientTransport
 	if got := server.GetInstance().SessionTracker().ActiveIPCounts()["alice"]; got != 1 {
 		t.Fatalf("active IPs = %d, want 1", got)
 	}
+	return session
 }
 
 func socksNegotiateNoAuth(t *testing.T, conn net.Conn) {
@@ -444,5 +451,387 @@ func socksNegotiateNoAuth(t *testing.T, conn net.Conn) {
 	}
 	if reply[0] != 0x05 || reply[1] != 0x00 {
 		t.Fatalf("unexpected socks greeting reply: %v", reply)
+	}
+}
+
+type proxyTestServer struct {
+	core *Core
+	port int
+}
+
+func startProxyTestServer(t *testing.T, headerTimeout time.Duration, route string) *proxyTestServer {
+	t.Helper()
+	port := freeTCPPort(t)
+	routeField := ""
+	if route != "" {
+		routeField = `,"route":` + route
+	}
+	config := fmt.Sprintf(`{
+		"log": {"level": "error"},
+		"inbounds": [{
+			"type": "socks",
+			"tag": "relay-in",
+			"listen": "127.0.0.1",
+			"listen_port": %d,
+			"users": [{"username": "alice", "password": "secret"}]
+		}],
+		"outbounds": [{"type": "direct", "tag": "direct"}]
+		%s
+	}`, port, routeField)
+	core := NewCore()
+	core.SetProxyProtocolPolicies(map[uint16]ProxyProtocolConfig{
+		uint16(port): {
+			Enabled:       true,
+			InboundTag:    "relay-in",
+			Trusted:       []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
+			HeaderTimeout: headerTimeout,
+		},
+	})
+	if err := core.Start([]byte(config)); err != nil {
+		t.Fatalf("start proxy test server: %v", err)
+	}
+	t.Cleanup(func() { _ = core.Stop() })
+	return &proxyTestServer{core: core, port: port}
+}
+
+func (s *proxyTestServer) dial() (net.Conn, error) {
+	return net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", s.port), 3*time.Second)
+}
+
+func TestProxyProtocolByteByByteHeader(t *testing.T) {
+	server := startProxyTestServer(t, 2*time.Second, "")
+	echo := startEchoServer(t)
+	echoAddr := echo.Addr().(*net.TCPAddr)
+
+	forwarder := startBytewiseHeaderForwarder(t,
+		fmt.Sprintf("127.0.0.1:%d", server.port),
+		"PROXY TCP4 192.0.2.10 203.0.113.1 50000 443\r\n")
+	conn, err := net.Dial("tcp", forwarder.Addr().String())
+	if err != nil {
+		t.Fatalf("dial forwarder: %v", err)
+	}
+	defer conn.Close()
+	socksNegotiate(t, conn, "alice", "secret")
+	if err = socksConnect(t, conn, echoAddr); err != nil {
+		t.Fatalf("socks connect: %v", err)
+	}
+	if _, err = conn.Write([]byte("ping")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	echoed := make([]byte, 4)
+	if _, err = io.ReadFull(conn, echoed); err != nil || string(echoed) != "ping" {
+		t.Fatalf("echo = %q, err = %v", echoed, err)
+	}
+	session := waitForSession(t, server.core, "alice")
+	if session.Client != "192.0.2.10:50000" {
+		t.Fatalf("client = %q", session.Client)
+	}
+}
+
+func TestProxyProtocolV2IPv6(t *testing.T) {
+	server := startProxyTestServer(t, 2*time.Second, "")
+	echo := startEchoServer(t)
+	echoAddr := echo.Addr().(*net.TCPAddr)
+
+	header := v2IPv6Header(netip.MustParseAddr("2001:db8:1:2::1"), 50000)
+	forwarder := startHeaderForwarder(t, fmt.Sprintf("127.0.0.1:%d", server.port), string(header))
+	conn, err := net.Dial("tcp", forwarder.Addr().String())
+	if err != nil {
+		t.Fatalf("dial forwarder: %v", err)
+	}
+	defer conn.Close()
+	socksNegotiate(t, conn, "alice", "secret")
+	if err = socksConnect(t, conn, echoAddr); err != nil {
+		t.Fatalf("socks connect: %v", err)
+	}
+	if _, err = conn.Write([]byte("ping")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	echoed := make([]byte, 4)
+	if _, err = io.ReadFull(conn, echoed); err != nil || string(echoed) != "ping" {
+		t.Fatalf("echo = %q, err = %v", echoed, err)
+	}
+	session := waitForSession(t, server.core, "alice")
+	if session.Client != "[2001:db8:1:2::1]:50000" {
+		t.Fatalf("client = %q", session.Client)
+	}
+	summary := server.core.GetInstance().SessionTracker().UserIPs("alice")
+	if summary.Count != 1 || summary.IPs[0].IP != "2001:db8:1:2::/64" {
+		t.Fatalf("ip summary = %+v", summary)
+	}
+}
+
+func TestProxyProtocolSlowConnectionsDoNotBlockAccept(t *testing.T) {
+	if testing.Short() {
+		t.Skip("opens 200 slow connections")
+	}
+	server := startProxyTestServer(t, 700*time.Millisecond, "")
+	echo := startEchoServer(t)
+	echoAddr := echo.Addr().(*net.TCPAddr)
+
+	slow := make([]net.Conn, 0, 200)
+	defer func() {
+		for _, conn := range slow {
+			_ = conn.Close()
+		}
+	}()
+	for i := 0; i < cap(slow); i++ {
+		conn, err := server.dial()
+		if err != nil {
+			t.Fatalf("dial slow %d: %v", i, err)
+		}
+		// A single byte in the header leaves the preprocessor blocked until
+		// the header timeout; the accept loop must keep running.
+		if _, err = conn.Write([]byte("P")); err != nil {
+			t.Fatalf("write slow %d: %v", i, err)
+		}
+		slow = append(slow, conn)
+	}
+
+	started := time.Now()
+	conn, err := server.dial()
+	if err != nil {
+		t.Fatalf("dial fast: %v", err)
+	}
+	defer conn.Close()
+	if _, err = conn.Write([]byte("PROXY TCP4 192.0.2.10 203.0.113.1 50000 443\r\n")); err != nil {
+		t.Fatalf("write header: %v", err)
+	}
+	socksNegotiate(t, conn, "alice", "secret")
+	if err = socksConnect(t, conn, echoAddr); err != nil {
+		t.Fatalf("socks connect: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 1500*time.Millisecond {
+		t.Fatalf("new connection took %v behind slow connections", elapsed)
+	}
+}
+
+func TestProxyProtocolSourceRoutingUsesPeerNotClient(t *testing.T) {
+	echo := startEchoServer(t)
+	echoAddr := echo.Addr().(*net.TCPAddr)
+
+	// The peer is 127.0.0.1, so a rule on the relay range must reject the
+	// session even though the verified client address is 192.0.2.10.
+	rejectRelay := startProxyTestServer(t, 2*time.Second, `{"rules":[{"source_ip_cidr":["127.0.0.0/8"],"action":"reject"}]}`)
+	conn, err := rejectRelay.dial()
+	if err != nil {
+		t.Fatalf("dial relay-rule server: %v", err)
+	}
+	if _, err = conn.Write([]byte("PROXY TCP4 192.0.2.10 203.0.113.1 50000 443\r\n")); err != nil {
+		t.Fatalf("write header: %v", err)
+	}
+	socksNegotiate(t, conn, "alice", "secret")
+	_ = conn.SetDeadline(time.Now().Add(time.Second))
+	if err = socksConnect(t, conn, echoAddr); err == nil {
+		_, _ = conn.Write([]byte("ping"))
+		buffer := make([]byte, 4)
+		if _, readErr := io.ReadFull(conn, buffer); readErr == nil {
+			t.Fatal("source_ip_cidr on the relay did not reject the session")
+		}
+	}
+	_ = conn.Close()
+
+	// A rule on the verified client range must not match: Source stays the
+	// peer address for routing.
+	rejectClient := startProxyTestServer(t, 2*time.Second, `{"rules":[{"source_ip_cidr":["192.0.2.0/24"],"action":"reject"}]}`)
+	conn, err = rejectClient.dial()
+	if err != nil {
+		t.Fatalf("dial client-rule server: %v", err)
+	}
+	defer conn.Close()
+	if _, err = conn.Write([]byte("PROXY TCP4 192.0.2.10 203.0.113.1 50000 443\r\n")); err != nil {
+		t.Fatalf("write header: %v", err)
+	}
+	socksNegotiate(t, conn, "alice", "secret")
+	if err = socksConnect(t, conn, echoAddr); err != nil {
+		t.Fatalf("source_ip_cidr matched the verified client address: %v", err)
+	}
+	if _, err = conn.Write([]byte("ping")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	echoed := make([]byte, 4)
+	if _, err = io.ReadFull(conn, echoed); err != nil || string(echoed) != "ping" {
+		t.Fatalf("echo = %q, err = %v", echoed, err)
+	}
+}
+
+func startBytewiseHeaderForwarder(t *testing.T, target string, header string) net.Listener {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("forwarder listen: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			client, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer client.Close()
+				upstream, err := net.Dial("tcp", target)
+				if err != nil {
+					return
+				}
+				defer upstream.Close()
+				for i := 0; i < len(header); i++ {
+					if _, err = upstream.Write([]byte{header[i]}); err != nil {
+						return
+					}
+					time.Sleep(time.Millisecond)
+				}
+				done := make(chan struct{}, 2)
+				go func() {
+					_, _ = io.Copy(upstream, client)
+					done <- struct{}{}
+				}()
+				go func() {
+					_, _ = io.Copy(client, upstream)
+					done <- struct{}{}
+				}()
+				<-done
+			}()
+		}
+	}()
+	return listener
+}
+
+func v2IPv6Header(source netip.Addr, sourcePort uint16) []byte {
+	header := []byte{0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A, 0x21, 0x21, 0x00, 0x24}
+	payload := make([]byte, 36)
+	copy(payload[0:16], source.AsSlice())
+	copy(payload[16:32], netip.MustParseAddr("2001:db8::2").AsSlice())
+	binary.BigEndian.PutUint16(payload[32:34], sourcePort)
+	binary.BigEndian.PutUint16(payload[34:36], 443)
+	return append(header, payload...)
+}
+
+func TestProxyProtocolClientAddrIgnoresForwardedFor(t *testing.T) {
+	session := runProxyTransportCase(t,
+		`"transport": {"type": "ws", "path": "/ws"}`,
+		`"transport": {"type": "ws", "path": "/ws", "headers": {"X-Forwarded-For": "203.0.113.99"}}`)
+	if session.Client != "192.0.2.10:50000" {
+		t.Fatalf("client = %q, want the PROXY address", session.Client)
+	}
+	if !strings.HasPrefix(session.Source, "203.0.113.99:") {
+		t.Fatalf("source = %q, want the spoofed X-Forwarded-For", session.Source)
+	}
+}
+
+func TestProxyProtocolEndToEndReality(t *testing.T) {
+	echo := startEchoServer(t)
+	echoAddr := echo.Addr().(*net.TCPAddr)
+	handshakeTarget := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write([]byte("ok"))
+	}))
+	t.Cleanup(handshakeTarget.Close)
+	handshakePort := handshakeTarget.Listener.Addr().(*net.TCPAddr).Port
+
+	privateKey, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate reality key: %v", err)
+	}
+	privateKeyText := base64.RawURLEncoding.EncodeToString(privateKey.Bytes())
+	publicKeyText := base64.RawURLEncoding.EncodeToString(privateKey.PublicKey().Bytes())
+	const shortID = "0123456789abcdef"
+	const uuid = "b831381d-6324-4d53-ad4f-8cda48b30811"
+	const serverName = "www.microsoft.com"
+
+	vlessPort := freeTCPPort(t)
+	socksPort := freeTCPPort(t)
+	serverConfig := fmt.Sprintf(`{
+		"log": {"level": "error"},
+		"inbounds": [{
+			"type": "vless",
+			"tag": "reality-in",
+			"listen": "127.0.0.1",
+			"listen_port": %d,
+			"users": [{"name": "alice", "uuid": "%s"}],
+			"tls": {
+				"enabled": true,
+				"server_name": "%s",
+				"reality": {
+					"enabled": true,
+					"handshake": {"server": "127.0.0.1", "server_port": %d},
+					"private_key": "%s",
+					"short_id": ["%s"]
+				}
+			}
+		}],
+		"outbounds": [{"type": "direct", "tag": "direct"}]
+	}`, vlessPort, uuid, serverName, handshakePort, privateKeyText, shortID)
+
+	server := NewCore()
+	server.SetProxyProtocolPolicies(map[uint16]ProxyProtocolConfig{
+		uint16(vlessPort): {
+			Enabled:       true,
+			InboundTag:    "reality-in",
+			Trusted:       []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
+			HeaderTimeout: 2 * time.Second,
+		},
+	})
+	if err := server.Start([]byte(serverConfig)); err != nil {
+		skipIfFeatureMissing(t, err)
+		t.Fatalf("start reality server: %v", err)
+	}
+	t.Cleanup(func() { _ = server.Stop() })
+
+	forwarder := startHeaderForwarder(t,
+		fmt.Sprintf("127.0.0.1:%d", vlessPort),
+		"PROXY TCP4 192.0.2.10 203.0.113.1 50000 443\r\n")
+	forwarderPort := forwarder.Addr().(*net.TCPAddr).Port
+
+	clientConfig := fmt.Sprintf(`{
+		"log": {"level": "error"},
+		"inbounds": [{
+			"type": "socks",
+			"tag": "socks-in",
+			"listen": "127.0.0.1",
+			"listen_port": %d
+		}],
+		"outbounds": [{
+			"type": "vless",
+			"tag": "reality-out",
+			"server": "127.0.0.1",
+			"server_port": %d,
+			"uuid": "%s",
+			"tls": {
+				"enabled": true,
+				"server_name": "%s",
+				"utls": {"enabled": true, "fingerprint": "chrome"},
+				"reality": {"enabled": true, "public_key": "%s", "short_id": "%s"}
+			}
+		}]
+	}`, socksPort, forwarderPort, uuid, serverName, publicKeyText, shortID)
+
+	client := NewCore()
+	if err := client.Start([]byte(clientConfig)); err != nil {
+		t.Fatalf("start reality client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Stop() })
+
+	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", socksPort))
+	if err != nil {
+		t.Fatalf("dial client socks: %v", err)
+	}
+	defer conn.Close()
+	socksNegotiateNoAuth(t, conn)
+	if err = socksConnect(t, conn, echoAddr); err != nil {
+		t.Fatalf("socks connect through reality: %v", err)
+	}
+	if _, err = conn.Write([]byte("ping")); err != nil {
+		t.Fatalf("write payload: %v", err)
+	}
+	echoed := make([]byte, 4)
+	if _, err = io.ReadFull(conn, echoed); err != nil {
+		t.Fatalf("read echo: %v", err)
+	}
+	if string(echoed) != "ping" {
+		t.Fatalf("echo = %q", echoed)
+	}
+	session := waitForSession(t, server, "alice")
+	if session.Client != "192.0.2.10:50000" {
+		t.Fatalf("client over reality = %q", session.Client)
 	}
 }
