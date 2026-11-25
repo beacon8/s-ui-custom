@@ -394,6 +394,24 @@ EOF
     chmod +x /etc/init.d/s-ui
 }
 
+# Keep the plaintext credentials in shell variables for the final summary.
+# The database only stores a one-way hash, so `sui admin -show` cannot recover
+# them; this function is the only place the installer can print the password it
+# generated or the operator just typed.
+INSTALL_USERNAME=""
+INSTALL_PASSWORD=""
+INSTALL_CREDS_PRINTED=0
+
+print_install_credentials() {
+    if [[ -n "${INSTALL_PASSWORD}" ]]; then
+        echo -e "${yellow}$(t current_creds)${plain}"
+        printf 'username: %s\npassword: %s\n' "${INSTALL_USERNAME}" "${INSTALL_PASSWORD}"
+        INSTALL_CREDS_PRINTED=1
+    else
+        /usr/local/s-ui/sui admin -show
+    fi
+}
+
 config_after_install() {
     # Set a random login before any setting command initializes a fresh database.
     if [[ ! -f "${SUI_DB_FOLDER:-/usr/local/s-ui/db}/s-ui.db" ]]; then
@@ -405,6 +423,8 @@ config_after_install() {
             echo "$(t creds_failed)" >&2
             exit 1
         fi
+        INSTALL_USERNAME="$login"
+        INSTALL_PASSWORD="$password"
         printf '%s\nusername: %s\npassword: %s\n' "$(t fresh_random)" "$login" "$password"
     fi
     echo -e "${yellow}$(t migrating)${plain}"
@@ -455,9 +475,10 @@ config_after_install() {
                 echo -e "${red}$(t creds_failed)${plain}"
                 exit 1
             fi
+            INSTALL_USERNAME="$config_account"
+            INSTALL_PASSWORD="$config_password"
         else
-            echo -e "${yellow}$(t current_creds)${plain}"
-            /usr/local/s-ui/sui admin -show
+            print_install_credentials
         fi
     else
         echo -e "${green}$(t cancelled)${plain}"
@@ -630,6 +651,10 @@ install_s-ui() {
     echo -e "${plain}"
     echo -e ""
     s-ui help
+    if [[ -n "${INSTALL_PASSWORD}" && "${INSTALL_CREDS_PRINTED}" -eq 0 ]]; then
+        echo -e ""
+        print_install_credentials
+    fi
 }
 
 echo -e "${green}$(t executing)${plain}"
