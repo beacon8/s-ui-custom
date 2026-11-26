@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	latestReleaseURL = "https://api.github.com/repos/beacon8/s-ui-custom/releases/latest"
+	latestReleaseURL = "https://api.github.com/repos/alireza0/s-ui/releases/latest"
 	// GitHub allows 60 unauthenticated calls an hour per IP, shared with
 	// whatever else runs on the host; a release check needs nowhere near that.
 	updateCheckTTL = 6 * time.Hour

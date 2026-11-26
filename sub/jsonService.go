@@ -9,6 +9,7 @@ import (
 	"github.com/alireza0/s-ui/database/model"
 	"github.com/alireza0/s-ui/service"
 	"github.com/alireza0/s-ui/util"
+	"github.com/alireza0/s-ui/util/common"
 )
 
 const defaultJson = `
@@ -49,41 +50,68 @@ type JsonService struct {
 }
 
 func (j *JsonService) GetJson(subId string, format string) (*string, []string, error) {
-	var jsonConfig map[string]interface{}
-
 	client, inDatas, err := j.getData(subId)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	outbounds, outTags, err := j.getOutbounds(client.Config, inDatas, nodeRemark(&j.SettingService, client))
-	if err != nil {
-		return nil, nil, err
-	}
-
-	extOutbounds, extTags := j.LinkService.GetExternalOutbounds(&client.Links)
-	*outbounds = append(*outbounds, extOutbounds...)
-	*outTags = append(*outTags, extTags...)
-
-	j.addDefaultOutbounds(outbounds, outTags)
-
-	err = json.Unmarshal([]byte(defaultJson), &jsonConfig)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	jsonConfig["outbounds"] = outbounds
-
-	// Add other objects from settings
-	j.addOthers(&jsonConfig)
-
-	result, _ := json.MarshalIndent(jsonConfig, "", "  ")
-	resultStr := string(result)
-
 	updateInterval, _ := j.SettingService.GetSubUpdates()
 	headers := util.GetHeaders(client, updateInterval)
+	return j.GetJsonForClients([]*model.Client{client}, [][]*model.Inbound{inDatas}, headers)
+}
 
+// GetJsonForClients builds one complete sing-box config for a group. Outbound
+// tags are made unique across all members before the default selector groups
+// are added.
+func (j *JsonService) GetJsonForClients(clients []*model.Client, inbounds [][]*model.Inbound, headers []string) (*string, []string, error) {
+	var jsonConfig map[string]interface{}
+	var outbounds []map[string]interface{}
+	var outTags []string
+	takenTags := make(map[string]bool)
+
+	for i, client := range clients {
+		clientOutbounds, clientTags, err := j.getOutboundsShared(client.Config, inbounds[i], nodeRemark(&j.SettingService, client), takenTags)
+		if err != nil {
+			return nil, nil, err
+		}
+		outbounds = append(outbounds, *clientOutbounds...)
+		outTags = append(outTags, *clientTags...)
+		extOutbounds, extTags := j.LinkService.GetExternalOutbounds(&client.Links)
+		for n, tag := range extTags {
+			unique := uniqueOutboundTag(tag, takenTags)
+			takenTags[unique] = true
+			extOutbounds[n]["tag"] = unique
+			outTags = append(outTags, unique)
+		}
+		outbounds = append(outbounds, extOutbounds...)
+	}
+
+	j.addDefaultOutbounds(&outbounds, &outTags)
+
+	if err := json.Unmarshal([]byte(defaultJson), &jsonConfig); err != nil {
+		return nil, nil, err
+	}
+	jsonConfig["outbounds"] = outbounds
+	if err := j.addOthers(&jsonConfig); err != nil {
+		return nil, nil, err
+	}
+
+	result, err := json.MarshalIndent(jsonConfig, "", "  ")
+	if err != nil {
+		return nil, nil, err
+	}
+	resultStr := string(result)
 	return &resultStr, headers, nil
+}
+
+// GetClientInbounds loads the enabled inbounds bound to one client.
+func GetClientInbounds(client *model.Client) ([]*model.Inbound, error) {
+	var clientInbounds []uint
+	if err := json.Unmarshal(client.Inbounds, &clientInbounds); err != nil {
+		return nil, err
+	}
+	var inbounds []*model.Inbound
+	err := database.GetDB().Model(model.Inbound{}).Preload("Tls").Where("id in ? AND enable = ?", clientInbounds, true).Find(&inbounds).Error
+	return inbounds, err
 }
 
 // uniqueOutboundTag keeps a name as the operator wrote it, falling back to a
@@ -117,13 +145,10 @@ func (j *JsonService) getData(subId string) (*model.Client, []*model.Inbound, er
 	if err != nil {
 		return nil, nil, err
 	}
-	var clientInbounds []uint
-	err = json.Unmarshal(client.Inbounds, &clientInbounds)
-	if err != nil {
-		return nil, nil, err
+	if legacySubscriptionBlocked(client) {
+		return nil, nil, common.NewError("this client uses a protected subscription link")
 	}
-	var inbounds []*model.Inbound
-	err = db.Model(model.Inbound{}).Preload("Tls").Where("id in ? AND enable = ?", clientInbounds, true).Find(&inbounds).Error
+	inbounds, err := GetClientInbounds(client)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -140,10 +165,13 @@ func applyDefaultHost(out map[string]interface{}) {
 }
 
 func (j *JsonService) getOutbounds(clientConfig json.RawMessage, inbounds []*model.Inbound, clientRemark string) (*[]map[string]interface{}, *[]string, error) {
+	return j.getOutboundsShared(clientConfig, inbounds, clientRemark, make(map[string]bool))
+}
+
+func (j *JsonService) getOutboundsShared(clientConfig json.RawMessage, inbounds []*model.Inbound, clientRemark string, takenTags map[string]bool) (*[]map[string]interface{}, *[]string, error) {
 	var outbounds []map[string]interface{}
 	var configs map[string]interface{}
 	var outTags []string
-	takenTags := make(map[string]bool)
 
 	err := json.Unmarshal(clientConfig, &configs)
 	if err != nil {
@@ -216,7 +244,7 @@ func (j *JsonService) getOutbounds(clientConfig json.RawMessage, inbounds []*mod
 		_, viaRealm := outbound["realm"]
 		if len(addrs) == 0 || viaRealm {
 			applyDefaultHost(outbound)
-			tag = util.JoinRemark(clientRemark, tag)
+			tag = uniqueOutboundTag(util.JoinRemark(clientRemark, tag), takenTags)
 			takenTags[tag] = true
 			outbound["tag"] = tag
 			// For mixed protocol, use separated socks and http

@@ -12,6 +12,7 @@ import (
 	"github.com/alireza0/s-ui/database/model"
 	"github.com/alireza0/s-ui/service"
 	"github.com/alireza0/s-ui/util"
+	"github.com/alireza0/s-ui/util/common"
 )
 
 type SubService struct {
@@ -28,31 +29,40 @@ func (s *SubService) getSubs(subId string, transform func([]string) []string) (*
 	if err != nil {
 		return nil, nil, err
 	}
+	return s.getSubsForClient(client, transform)
+}
 
+// getSubsForClient generates the legacy link-list body for one already loaded
+// client. Group and personal token routes use it too, so all three paths share
+// the same enable/disabled-inbound/encoding rules.
+func (s *SubService) getSubsForClient(client *model.Client, transform func([]string) []string) (*string, []string, error) {
+	linksArray, err := s.getClientLinks(client)
+	if err != nil {
+		return nil, nil, err
+	}
+	if transform != nil {
+		linksArray = transform(linksArray)
+	}
+	result := strings.Join(linksArray, "\n")
+	headers := s.getClientHeaders(client)
+	subEncode, _ := s.SettingService.GetSubEncode()
+	if subEncode {
+		result = base64.StdEncoding.EncodeToString([]byte(result))
+	}
+	return &result, headers, nil
+}
+
+func (s *SubService) getClientLinks(client *model.Client) ([]string, error) {
 	clientInfo := ""
 	subShowInfo, _ := s.SettingService.GetSubShowInfo()
 	if subShowInfo {
 		clientInfo = s.getClientInfo(client)
 	}
-
 	links, err := dropDisabledLinks(client.Links)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	linksArray := s.LinkService.GetLinks(&links, "all", clientInfo)
-	if transform != nil {
-		linksArray = transform(linksArray)
-	}
-	result := strings.Join(linksArray, "\n")
-
-	headers := s.getClientHeaders(client)
-
-	subEncode, _ := s.SettingService.GetSubEncode()
-	if subEncode {
-		result = base64.StdEncoding.EncodeToString([]byte(result))
-	}
-
-	return &result, headers, nil
+	return s.LinkService.GetLinks(&links, "all", clientInfo), nil
 }
 
 // dropDisabledLinks removes the local links of disabled inbounds. They stay
@@ -83,7 +93,35 @@ func (j *SubService) getClientBySubId(subId string) (*model.Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	if legacySubscriptionBlocked(client) {
+		return nil, common.NewError("this client uses a protected subscription link")
+	}
 	return client, nil
+}
+
+// getClientByID is the token-path loader. It deliberately does not apply the
+// legacy-name protection: the member row is the authorization.
+func (j *SubService) getClientByID(id uint) (*model.Client, error) {
+	db := database.GetDB()
+	client := &model.Client{}
+	if err := db.Model(model.Client{}).Where("enable = true and id = ?", id).First(client).Error; err != nil {
+		return nil, err
+	}
+	return client, nil
+}
+
+// legacySubscriptionBlocked reports whether a client has a subscription member
+// row. Imported clients are protected from the old /<username> path as soon as
+// the member row exists, even if the caller knows the client name.
+func legacySubscriptionBlocked(client *model.Client) bool {
+	if client == nil || client.Id == 0 {
+		return false
+	}
+	var count int64
+	if err := database.GetDB().Model(model.SubscriptionMember{}).Where("client_id = ?", client.Id).Count(&count).Error; err != nil {
+		return true
+	}
+	return count > 0
 }
 
 func (s *SubService) getClientHeaders(client *model.Client) []string {

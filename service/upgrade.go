@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	releaseDownloadURL = "https://github.com/beacon8/s-ui-custom/releases/download/"
+	releaseDownloadURL = "https://github.com/alireza0/s-ui/releases/download/"
 	// The unit install.sh writes. Upgrading in place only makes sense for the
 	// installation that unit runs; anything else was set up by hand.
 	systemdUnit = "s-ui.service"

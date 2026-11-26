@@ -7,290 +7,46 @@
     @close="enableEditor = false"
     @save="saveEditor"
   />
-  <a-card size="small">
-    <a-row :gutter="[12, 12]">
-      <a-col
-        :xs="24"
-        :sm="12"
-        :md="6"
-      >
-        <a-form-item
-          :label="$t('setting.defaultRules')"
-          style="margin-bottom: 0;"
-        >
-          <a-select
-            v-model:value="selectedDefaultRules"
-            :options="defaultRuleItems"
-            :field-names="{ label: 'title', value: 'value' }"
-            mode="multiple"
-            style="width: 100%"
-          />
-        </a-form-item>
-      </a-col>
-      <a-col
-        :xs="24"
-        :sm="12"
-        :md="6"
-        :lg="4"
-      >
-        <a-form-item
-          :label="$t('setting.routeFinal')"
-          style="margin-bottom: 0;"
-        >
-          <a-select
-            v-model:value="routeFinal"
-            :options="[{ title: 'Proxy', value: 'proxy' }, { title: 'Direct', value: 'direct' }]"
-            :field-names="{ label: 'title', value: 'value' }"
-            allow-clear
-            style="width: 100%"
-          />
-        </a-form-item>
-      </a-col>
-    </a-row>
-    <a-row
-      :gutter="[12, 12]"
-      style="margin-top: 12px;"
+  <div class="sub-pane">
+    <a-form
+      layout="vertical"
+      class="sub-form"
     >
-      <a-col
-        :xs="24"
-        :sm="12"
-        :md="6"
-      >
-        <a-form-item
-          :label="$t('setting.toProxy')"
-          style="margin-bottom: 0;"
-        >
-          <a-select
-            v-model:value="ruleToProxy"
-            :options="geoOptions"
-            :field-names="{ label: 'title', value: 'value' }"
-            mode="multiple"
-            style="width: 100%"
-          />
-        </a-form-item>
-      </a-col>
-      <a-col
-        :xs="24"
-        :sm="12"
-        :md="6"
-      >
-        <a-form-item
-          :label="$t('setting.toDirect')"
-          style="margin-bottom: 0;"
-        >
-          <a-select
-            v-model:value="ruleToDirect"
-            :options="geoOptions"
-            :field-names="{ label: 'title', value: 'value' }"
-            mode="multiple"
-            style="width: 100%"
-          />
-        </a-form-item>
-      </a-col>
-      <a-col
-        :xs="24"
-        :sm="12"
-        :md="6"
-      >
-        <a-form-item
-          :label="$t('setting.toBlock')"
-          style="margin-bottom: 0;"
-        >
-          <a-select
-            v-model:value="ruleToBlock"
-            :options="geoOptions"
-            :field-names="{ label: 'title', value: 'value' }"
-            mode="multiple"
-            style="width: 100%"
-          />
-        </a-form-item>
-      </a-col>
-    </a-row>
-    <a-row
-      v-if="enableLog"
-      :gutter="[12, 12]"
-      style="margin-top: 12px;"
-    >
-      <a-col
-        :xs="24"
-        :sm="12"
-        :md="6"
-        :lg="4"
-      >
-        <a-form-item
-          :label="$t('basic.log.level')"
-          style="margin-bottom: 0;"
-        >
-          <a-select
-            v-model:value="subJsonExt.log!.level"
-            style="width: 100%"
-          >
-            <a-select-option
-              v-for="item in levels"
-              :key="item"
-              :value="item"
-            >
-              {{ item }}
-            </a-select-option>
-          </a-select>
-        </a-form-item>
-      </a-col>
-      <a-col
-        :xs="24"
-        :sm="12"
-        :md="6"
-        :lg="4"
-        style="display: flex; align-items: center;"
-      >
-        <a-space>
-          <a-switch v-model:checked="subJsonExt.log!.timestamp" />
-          <span>{{ $t('setting.timestamp') }}</span>
-        </a-space>
-      </a-col>
-    </a-row>
-    <a-row
-      v-if="enableDns"
-      :gutter="[12, 12]"
-      style="margin-top: 12px;"
-    >
-      <a-col
-        :xs="24"
-        :sm="12"
-        :md="6"
-        :lg="4"
-      >
-        <a-form-item
-          :label="$t('dns.final')"
-          style="margin-bottom: 0;"
-        >
-          <a-select
-            v-model:value="subJsonExt.dns!.final"
-            style="width: 100%"
-          >
-            <a-select-option
-              v-for="item in dnsTags"
-              :key="item"
-              :value="item"
-            >
-              {{ item }}
-            </a-select-option>
-          </a-select>
-        </a-form-item>
-      </a-col>
-      <a-col
-        :xs="24"
-        :sm="12"
-        :md="6"
-        :lg="4"
-      >
-        <SimpleDNS
-          :data="proxyDns"
-          :label="$t('setting.globalDns')"
-        />
-      </a-col>
-      <a-col
-        :xs="24"
-        :sm="12"
-        :md="6"
-        :lg="4"
-      >
-        <SimpleDNS
-          :data="directDns"
-          :label="$t('setting.directDns')"
-        />
-      </a-col>
-    </a-row>
-    <a-row
-      v-if="enableDns"
-      :gutter="[12, 12]"
-      style="margin-top: 12px;"
-    >
-      <a-col
-        :xs="24"
-        :sm="12"
-        :md="6"
-        :lg="4"
-      >
-        <a-form-item
-          :label="$t('basic.routing.defaultDns')"
-          style="margin-bottom: 0;"
-        >
-          <a-select
-            v-model:value="subJsonExt.default_domain_resolver"
-            allow-clear
-            style="width: 100%"
-            @change="(v: unknown) => { if (!v) delete subJsonExt.default_domain_resolver }"
-          >
-            <a-select-option
-              v-for="item in dnsTags"
-              :key="item"
-              :value="item"
-            >
-              {{ item }}
-            </a-select-option>
-          </a-select>
-        </a-form-item>
-      </a-col>
-      <a-col
-        :xs="24"
-        :sm="12"
-        :md="6"
-      >
-        <a-form-item
-          :label="$t('setting.toDirectDns')"
-          style="margin-bottom: 0;"
-        >
-          <a-select
-            v-model:value="dnsToDirect"
-            :options="geositeOptions"
-            :field-names="{ label: 'title', value: 'value' }"
-            mode="multiple"
-            style="width: 100%"
-          />
-        </a-form-item>
-      </a-col>
-    </a-row>
-    <template v-if="enableInb">
-      <a-row
-        :gutter="[12, 12]"
-        style="margin-top: 12px;"
-      >
+      <a-row :gutter="[12, 12]">
         <a-col
           :xs="24"
           :sm="12"
-          :md="6"
+          :md="12"
+          :lg="16"
         >
           <a-form-item
-            :label="$t('in.addr')"
+            :label="$t('setting.defaultRules')"
             style="margin-bottom: 0;"
           >
             <a-select
-              v-model:value="inbounds[0].address"
-              mode="tags"
+              v-model:value="selectedDefaultRules"
+              :options="defaultRuleItems"
+              :field-names="{ label: 'title', value: 'value' }"
+              mode="multiple"
               style="width: 100%"
-            >
-              <a-select-option
-                v-for="item in defaultInb[0].address"
-                :key="item"
-                :value="item"
-              >
-                {{ item }}
-              </a-select-option>
-            </a-select>
+            />
           </a-form-item>
         </a-col>
         <a-col
           :xs="24"
           :sm="12"
-          :md="6"
-          :lg="4"
+          :md="12"
+          :lg="8"
         >
           <a-form-item
-            label="MTU"
+            :label="$t('setting.routeFinal')"
             style="margin-bottom: 0;"
           >
-            <a-input-number
-              v-model:value="inbounds[0].mtu"
+            <a-select
+              v-model:value="routeFinal"
+              :options="[{ title: 'Proxy', value: 'proxy' }, { title: 'Direct', value: 'direct' }]"
+              :field-names="{ label: 'title', value: 'value' }"
+              allow-clear
               style="width: 100%"
             />
           </a-form-item>
@@ -303,19 +59,127 @@
         <a-col
           :xs="24"
           :sm="12"
-          :md="6"
+          :md="12"
+          :lg="8"
         >
           <a-form-item
-            :label="$t('setting.excludePkg')"
+            :label="$t('setting.toProxy')"
             style="margin-bottom: 0;"
           >
             <a-select
-              v-model:value="inbounds[0].exclude_package"
-              mode="tags"
+              v-model:value="ruleToProxy"
+              :options="geoOptions"
+              :field-names="{ label: 'title', value: 'value' }"
+              mode="multiple"
+              style="width: 100%"
+            />
+          </a-form-item>
+        </a-col>
+        <a-col
+          :xs="24"
+          :sm="12"
+          :md="12"
+          :lg="8"
+        >
+          <a-form-item
+            :label="$t('setting.toDirect')"
+            style="margin-bottom: 0;"
+          >
+            <a-select
+              v-model:value="ruleToDirect"
+              :options="geoOptions"
+              :field-names="{ label: 'title', value: 'value' }"
+              mode="multiple"
+              style="width: 100%"
+            />
+          </a-form-item>
+        </a-col>
+        <a-col
+          :xs="24"
+          :sm="12"
+          :md="12"
+          :lg="8"
+        >
+          <a-form-item
+            :label="$t('setting.toBlock')"
+            style="margin-bottom: 0;"
+          >
+            <a-select
+              v-model:value="ruleToBlock"
+              :options="geoOptions"
+              :field-names="{ label: 'title', value: 'value' }"
+              mode="multiple"
+              style="width: 100%"
+            />
+          </a-form-item>
+        </a-col>
+      </a-row>
+      <a-flex
+        class="sub-actions"
+        justify="end"
+        gap="small"
+        style="margin-top: 12px;"
+      >
+        <a-button
+          type="default"
+          @click="openEditor"
+        >
+          {{ $t('editor') }}
+        </a-button>
+        <a-popover
+          v-model:open="menu"
+          trigger="click"
+          placement="left"
+        >
+          <template #content>
+            <a-flex
+              vertical
+              gap="small"
+            >
+              <a-space>
+                <a-switch v-model:checked="enableLog" />
+                <span>{{ $t('basic.log.title') }}</span>
+              </a-space>
+              <a-space>
+                <a-switch v-model:checked="enableDns" />
+                <span>DNS</span>
+              </a-space>
+              <a-space>
+                <a-switch v-model:checked="enableInb" />
+                <span>{{ $t('objects.inbound') }}</span>
+              </a-space>
+              <a-space>
+                <a-switch v-model:checked="enableExp" />
+                <span>Experimental</span>
+              </a-space>
+            </a-flex>
+          </template>
+          <a-button type="default">
+            {{ $t('setting.jsonSubOptions') }}
+          </a-button>
+        </a-popover>
+      </a-flex>
+      <a-row
+        v-if="enableLog"
+        :gutter="[12, 12]"
+        style="margin-top: 12px;"
+      >
+        <a-col
+          :xs="24"
+          :sm="12"
+          :md="6"
+          :lg="4"
+        >
+          <a-form-item
+            :label="$t('basic.log.level')"
+            style="margin-bottom: 0;"
+          >
+            <a-select
+              v-model:value="subJsonExt.log!.level"
               style="width: 100%"
             >
               <a-select-option
-                v-for="item in ['ir.mci.ecareapp', 'com.myirancell']"
+                v-for="item in levels"
                 :key="item"
                 :value="item"
               >
@@ -329,60 +193,212 @@
           :sm="12"
           :md="6"
           :lg="4"
-          style="display: flex; align-items: center;"
         >
-          <a-space>
-            <a-switch v-model:checked="platformProxy" />
-            <span>Platform HTTP proxy</span>
-          </a-space>
+          <a-form-item
+            :label="$t('setting.timestamp')"
+            style="margin-bottom: 0;"
+          >
+            <div class="switch-control">
+              <a-switch v-model:checked="subJsonExt.log!.timestamp" />
+            </div>
+          </a-form-item>
         </a-col>
       </a-row>
-    </template>
-    <a-flex
-      justify="end"
-      gap="small"
-      style="margin-top: 12px;"
-    >
-      <a-button
-        type="default"
-        @click="openEditor"
+      <a-row
+        v-if="enableDns"
+        :gutter="[12, 12]"
+        style="margin-top: 12px;"
       >
-        {{ $t('editor') }}
-      </a-button>
-      <a-popover
-        v-model:open="menu"
-        trigger="click"
-        placement="left"
-      >
-        <template #content>
-          <a-flex
-            vertical
-            gap="small"
+        <a-col
+          :xs="24"
+          :sm="12"
+          :md="6"
+          :lg="4"
+        >
+          <a-form-item
+            :label="$t('dns.final')"
+            style="margin-bottom: 0;"
           >
-            <a-space>
-              <a-switch v-model:checked="enableLog" />
-              <span>{{ $t('basic.log.title') }}</span>
-            </a-space>
-            <a-space>
-              <a-switch v-model:checked="enableDns" />
-              <span>DNS</span>
-            </a-space>
-            <a-space>
-              <a-switch v-model:checked="enableInb" />
-              <span>{{ $t('objects.inbound') }}</span>
-            </a-space>
-            <a-space>
-              <a-switch v-model:checked="enableExp" />
-              <span>Experimental</span>
-            </a-space>
-          </a-flex>
-        </template>
-        <a-button type="default">
-          {{ $t('setting.jsonSubOptions') }}
-        </a-button>
-      </a-popover>
-    </a-flex>
-  </a-card>
+            <a-select
+              v-model:value="subJsonExt.dns!.final"
+              style="width: 100%"
+            >
+              <a-select-option
+                v-for="item in dnsTags"
+                :key="item"
+                :value="item"
+              >
+                {{ item }}
+              </a-select-option>
+            </a-select>
+          </a-form-item>
+        </a-col>
+        <a-col
+          :xs="24"
+          :sm="12"
+          :md="6"
+          :lg="4"
+        >
+          <SimpleDNS
+            :data="proxyDns"
+            :label="$t('setting.globalDns')"
+          />
+        </a-col>
+        <a-col
+          :xs="24"
+          :sm="12"
+          :md="6"
+          :lg="4"
+        >
+          <SimpleDNS
+            :data="directDns"
+            :label="$t('setting.directDns')"
+          />
+        </a-col>
+      </a-row>
+      <a-row
+        v-if="enableDns"
+        :gutter="[12, 12]"
+        style="margin-top: 12px;"
+      >
+        <a-col
+          :xs="24"
+          :sm="12"
+          :md="6"
+          :lg="4"
+        >
+          <a-form-item
+            :label="$t('basic.routing.defaultDns')"
+            style="margin-bottom: 0;"
+          >
+            <a-select
+              v-model:value="subJsonExt.default_domain_resolver"
+              allow-clear
+              style="width: 100%"
+              @change="(v: unknown) => { if (!v) delete subJsonExt.default_domain_resolver }"
+            >
+              <a-select-option
+                v-for="item in dnsTags"
+                :key="item"
+                :value="item"
+              >
+                {{ item }}
+              </a-select-option>
+            </a-select>
+          </a-form-item>
+        </a-col>
+        <a-col
+          :xs="24"
+          :sm="12"
+          :md="6"
+        >
+          <a-form-item
+            :label="$t('setting.toDirectDns')"
+            style="margin-bottom: 0;"
+          >
+            <a-select
+              v-model:value="dnsToDirect"
+              :options="geositeOptions"
+              :field-names="{ label: 'title', value: 'value' }"
+              mode="multiple"
+              style="width: 100%"
+            />
+          </a-form-item>
+        </a-col>
+      </a-row>
+      <template v-if="enableInb">
+        <a-row
+          :gutter="[12, 12]"
+          style="margin-top: 12px;"
+        >
+          <a-col
+            :xs="24"
+            :sm="12"
+            :md="6"
+          >
+            <a-form-item
+              :label="$t('in.addr')"
+              style="margin-bottom: 0;"
+            >
+              <a-select
+                v-model:value="inbounds[0].address"
+                mode="tags"
+                style="width: 100%"
+              >
+                <a-select-option
+                  v-for="item in defaultInb[0].address"
+                  :key="item"
+                  :value="item"
+                >
+                  {{ item }}
+                </a-select-option>
+              </a-select>
+            </a-form-item>
+          </a-col>
+          <a-col
+            :xs="24"
+            :sm="12"
+            :md="6"
+            :lg="4"
+          >
+            <a-form-item
+              label="MTU"
+              style="margin-bottom: 0;"
+            >
+              <a-input-number
+                v-model:value="inbounds[0].mtu"
+                style="width: 100%"
+              />
+            </a-form-item>
+          </a-col>
+        </a-row>
+        <a-row
+          :gutter="[12, 12]"
+          style="margin-top: 12px;"
+        >
+          <a-col
+            :xs="24"
+            :sm="12"
+            :md="6"
+          >
+            <a-form-item
+              :label="$t('setting.excludePkg')"
+              style="margin-bottom: 0;"
+            >
+              <a-select
+                v-model:value="inbounds[0].exclude_package"
+                mode="tags"
+                style="width: 100%"
+              >
+                <a-select-option
+                  v-for="item in ['ir.mci.ecareapp', 'com.myirancell']"
+                  :key="item"
+                  :value="item"
+                >
+                  {{ item }}
+                </a-select-option>
+              </a-select>
+            </a-form-item>
+          </a-col>
+          <a-col
+            :xs="24"
+            :sm="12"
+            :md="6"
+            :lg="4"
+          >
+            <a-form-item
+              label="Platform HTTP proxy"
+              style="margin-bottom: 0;"
+            >
+              <div class="switch-control">
+                <a-switch v-model:checked="platformProxy" />
+              </div>
+            </a-form-item>
+          </a-col>
+        </a-row>
+      </template>
+    </a-form>
+  </div>
 </template>
 
 <script lang="ts">
@@ -875,3 +891,36 @@ export default {
   }
 }
 </script>
+<style scoped>
+.sub-pane {
+  min-width: 0;
+}
+
+.sub-form {
+  min-width: 0;
+  overflow-x: clip;
+}
+
+.sub-form .ant-form-item {
+  margin-bottom: 0;
+}
+
+.switch-control {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+}
+
+.sub-actions {
+  width: 100%;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+@media (max-width: 575px) {
+  .sub-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+</style>

@@ -14,7 +14,7 @@ import (
 	"github.com/alireza0/s-ui/database/model"
 )
 
-func apiv2TestServer(t *testing.T) (*httptest.Server, string) {
+func apiv2TestServer(t *testing.T) (*httptest.Server, string, *APIv2Handler) {
 	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
@@ -53,22 +53,23 @@ func apiv2TestServer(t *testing.T) (*httptest.Server, string) {
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 
-	return srv, testToken
+	return srv, testToken, apiv2
 }
 
 func TestAPIv2TokenAuthentication(t *testing.T) {
-	srv, validToken := apiv2TestServer(t)
+	srv, validToken, _ := apiv2TestServer(t)
 
 	testCases := []struct {
 		name        string
 		token       string
 		sendHeader  bool
 		wantSuccess bool
+		wantStatus  int
 	}{
-		{"missing token header", "", false, false},
-		{"empty token", "", true, false},
-		{"invalid token", "wrong-secret-token", true, false},
-		{"valid token", validToken, true, true},
+		{"missing token header", "", false, false, http.StatusUnauthorized},
+		{"empty token", "", true, false, http.StatusUnauthorized},
+		{"invalid token", "wrong-secret-token", true, false, http.StatusUnauthorized},
+		{"valid token", validToken, true, true, http.StatusOK},
 	}
 
 	for _, tc := range testCases {
@@ -87,8 +88,8 @@ func TestAPIv2TokenAuthentication(t *testing.T) {
 			}
 			defer resp.Body.Close()
 
-			if resp.StatusCode != http.StatusOK {
-				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			if resp.StatusCode != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tc.wantStatus)
 			}
 
 			var body Msg
@@ -104,7 +105,7 @@ func TestAPIv2TokenAuthentication(t *testing.T) {
 }
 
 func TestAPIv2UnknownActionHandling(t *testing.T) {
-	srv, validToken := apiv2TestServer(t)
+	srv, validToken, _ := apiv2TestServer(t)
 
 	testCases := []struct {
 		name   string
@@ -149,7 +150,7 @@ func TestAPIv2UnknownActionHandling(t *testing.T) {
 }
 
 func TestAPIv2CoreGetActions(t *testing.T) {
-	srv, validToken := apiv2TestServer(t)
+	srv, validToken, _ := apiv2TestServer(t)
 
 	actions := []string{
 		"/apiv2/status",

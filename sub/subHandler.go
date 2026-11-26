@@ -15,6 +15,7 @@ type SubHandler struct {
 	SubService
 	JsonService
 	ClashService
+	GroupSubService
 }
 
 func NewSubHandler(g *gin.RouterGroup) {
@@ -25,6 +26,13 @@ func NewSubHandler(g *gin.RouterGroup) {
 func (s *SubHandler) initRouter(g *gin.RouterGroup) {
 	g.GET("/:subid", s.subs)
 	g.HEAD("/:subid", s.subHeaders)
+	// Token-protected links carry both an independent id and a token. The
+	// token is read from the query so any subscription client can use the URL
+	// without custom headers.
+	g.GET("/g/:subid", s.groupSubs)
+	g.HEAD("/g/:subid", s.groupSubHeaders)
+	g.GET("/c/:subid", s.memberSubs)
+	g.HEAD("/c/:subid", s.memberSubHeaders)
 }
 
 func (s *SubHandler) subs(c *gin.Context) {
@@ -73,11 +81,84 @@ func (s *SubHandler) subHeaders(c *gin.Context) {
 	c.Status(200)
 }
 
+func (s *SubHandler) groupSubs(c *gin.Context) {
+	format := s.requestedFormat(c)
+	result, headers, err := s.GroupSubService.GroupContent(c.Param("subid"), c.Query("token"), format)
+	if err != nil || result == nil {
+		c.Header("Cache-Control", "no-store")
+		c.String(404, "Not Found")
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	s.addHeaders(c, headers)
+	c.String(200, *result)
+}
+
+func (s *SubHandler) groupSubHeaders(c *gin.Context) {
+	_, headers, err := s.GroupSubService.GroupContent(c.Param("subid"), c.Query("token"), s.requestedFormat(c))
+	if err != nil {
+		c.Header("Cache-Control", "no-store")
+		c.String(404, "Not Found")
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	s.addHeaders(c, headers)
+	c.Status(200)
+}
+
+func (s *SubHandler) memberSubs(c *gin.Context) {
+	format := s.requestedFormat(c)
+	result, headers, err := s.GroupSubService.PersonalContent(c.Param("subid"), c.Query("token"), format)
+	if err != nil || result == nil {
+		c.Header("Cache-Control", "no-store")
+		c.String(404, "Not Found")
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	s.addHeaders(c, headers)
+	c.String(200, *result)
+}
+
+func (s *SubHandler) memberSubHeaders(c *gin.Context) {
+	_, headers, err := s.GroupSubService.PersonalContent(c.Param("subid"), c.Query("token"), s.requestedFormat(c))
+	if err != nil {
+		c.Header("Cache-Control", "no-store")
+		c.String(404, "Not Found")
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	s.addHeaders(c, headers)
+	c.Status(200)
+}
+
+// requestedFormat applies the same explicit-format / User-Agent rules as the
+// legacy route.
+func (s *SubHandler) requestedFormat(c *gin.Context) string {
+	format, ok := c.GetQuery("format")
+	if !ok {
+		c.Writer.Header().Add("Vary", "User-Agent")
+		return formatForUserAgent(c.Request.UserAgent())
+	}
+	return format
+}
+
 func (s *SubHandler) addHeaders(c *gin.Context, headers []string) {
-	c.Writer.Header().Set("Subscription-Userinfo", headers[0])
-	c.Writer.Header().Set("Profile-Update-Interval", headers[1])
-	c.Writer.Header().Set("Profile-Title", headers[2])
-	c.Writer.Header().Set("Content-Disposition", contentDispositionHeader(headers[2]))
+	// Group responses omit Subscription-Userinfo when quotas/expiry cannot be
+	// summed without lying; an empty value is not written at all.
+	if len(headers) > 0 && headers[0] != "" {
+		c.Writer.Header().Set("Subscription-Userinfo", headers[0])
+	}
+	if len(headers) > 1 && headers[1] != "" {
+		c.Writer.Header().Set("Profile-Update-Interval", headers[1])
+	}
+	title := ""
+	if len(headers) > 2 {
+		title = headers[2]
+	}
+	if title != "" {
+		c.Writer.Header().Set("Profile-Title", title)
+	}
+	c.Writer.Header().Set("Content-Disposition", contentDispositionHeader(title))
 }
 
 func contentDispositionHeader(name string) string {

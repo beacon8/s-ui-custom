@@ -33,6 +33,9 @@ func seedEveryTable(t *testing.T) {
 		&model.Stats{DateTime: 1, Resource: "user", Tag: "someone", Direction: true, Traffic: 42},
 		&model.Client{Name: "someone", Enable: true, Config: json.RawMessage(`{}`), Inbounds: json.RawMessage(`[]`), Links: json.RawMessage(`[]`)},
 		&model.Changes{DateTime: 1, Actor: "admin", Key: "clients", Action: "new", Obj: json.RawMessage(`"someone"`)},
+		&model.ImportBatch{BatchId: "imp_test", Actor: "admin", IdemKey: "key", Group: "US-1-1", Count: 1, Status: "applied", Request: "{}", Result: "{}"},
+		&model.SubscriptionGroup{SubID: "g_test", Name: "US-1-1", BatchId: "imp_test", TokenEnc: "enc", CreatedAt: 1},
+		&model.SubscriptionMember{GroupId: 1, ClientId: 1, SubID: "c_test", TokenEnc: "enc", CreatedAt: 1},
 	}
 	for _, row := range rows {
 		if err := db.Create(row).Error; err != nil {

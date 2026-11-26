@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/alireza0/s-ui/database/model"
 	"github.com/alireza0/s-ui/logger"
 	"github.com/alireza0/s-ui/service"
 	"github.com/alireza0/s-ui/util"
@@ -72,34 +73,46 @@ func asBool(v interface{}) bool {
 }
 
 func (s *ClashService) GetClash(subId string) (*string, []string, error) {
-
 	client, inDatas, err := s.getData(subId)
 	if err != nil {
 		return nil, nil, err
 	}
+	updateInterval, _ := s.SettingService.GetSubUpdates()
+	headers := util.GetHeaders(client, updateInterval)
+	return s.GetClashForClients([]*model.Client{client}, [][]*model.Inbound{inDatas}, headers)
+}
 
-	outbounds, outTags, err := s.getOutbounds(client.Config, inDatas, nodeRemark(&s.SettingService, client))
-	if err != nil {
-		return nil, nil, err
+// GetClashForClients builds one mihomo/Clash config for a group. Proxy names
+// are made unique across members before default proxy groups reference them.
+func (s *ClashService) GetClashForClients(clients []*model.Client, inbounds [][]*model.Inbound, headers []string) (*string, []string, error) {
+	var outbounds []map[string]interface{}
+	var outTags []string
+	takenTags := make(map[string]bool)
+	for i, client := range clients {
+		clientOutbounds, clientTags, err := s.getOutboundsShared(client.Config, inbounds[i], nodeRemark(&s.SettingService, client), takenTags)
+		if err != nil {
+			return nil, nil, err
+		}
+		outbounds = append(outbounds, *clientOutbounds...)
+		outTags = append(outTags, *clientTags...)
+		extOutbounds, extTags := s.LinkService.GetExternalOutboundsForClash(&client.Links)
+		for n, tag := range extTags {
+			unique := uniqueOutboundTag(tag, takenTags)
+			takenTags[unique] = true
+			extOutbounds[n]["tag"] = unique
+			outTags = append(outTags, unique)
+		}
+		outbounds = append(outbounds, extOutbounds...)
 	}
-
-	extOutbounds, extTags := s.LinkService.GetExternalOutboundsForClash(&client.Links)
-	*outbounds = append(*outbounds, extOutbounds...)
-	*outTags = append(*outTags, extTags...)
 
 	basicConfig, err := s.getClashConfig()
 	if err != nil || len(basicConfig) == 0 {
 		basicConfig = basicClashConfig
 	}
-
-	resultStr, err := s.ConvertToClashMeta(outbounds, basicConfig)
+	resultStr, err := s.ConvertToClashMeta(&outbounds, basicConfig)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	updateInterval, _ := s.SettingService.GetSubUpdates()
-	headers := util.GetHeaders(client, updateInterval)
-
 	return &resultStr, headers, nil
 }
 

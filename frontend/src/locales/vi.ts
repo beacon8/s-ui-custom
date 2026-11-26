@@ -72,6 +72,8 @@ export default {
     charts: "Biểu đồ",
     infos: "Thông tin",
     gauge: {
+      noData: "Không có dữ liệu",
+      disabled: "Chưa bật",
       cpu: "Đồng hồ CPU",
       mem: "Đồng hồ RAM",
       dsk: "Đồng hồ Disk",
@@ -294,6 +296,7 @@ export default {
     delayStartHint: "Bắt đầu tính từ lần kết nối đầu tiên",
     connections: "Kết nối",
     connectionsHint: "Kết nối hiện tại {current} / giới hạn {limit}; ∞ nghĩa là không giới hạn",
+    speed: "Tốc độ thời gian thực",
     upRate: "Giới hạn tải lên",
     downRate: "Giới hạn tải xuống",
     rateHint: "0 nghĩa là không giới hạn; dùng chung cho tất cả inbound của máy khách; tối đa 17179 Mbps",

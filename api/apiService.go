@@ -2,13 +2,18 @@ package api
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/alireza0/s-ui/database"
+	"github.com/alireza0/s-ui/database/model"
 	"github.com/alireza0/s-ui/logger"
 	"github.com/alireza0/s-ui/service"
+	"github.com/alireza0/s-ui/sub"
 	"github.com/alireza0/s-ui/util"
 	"github.com/alireza0/s-ui/util/common"
 
@@ -263,6 +268,25 @@ func (a *ApiService) GetUserIps(c *gin.Context) {
 	jsonObj(c, summary, err)
 }
 
+// GetUserRates returns a read-only per-user byte snapshot for the visible
+// clients. The frontend sends a JSON array so names containing commas or other
+// punctuation stay unambiguous. It is polled every ~2s and must never drain the
+// counters used by the stats job.
+func (a *ApiService) GetUserRates(c *gin.Context) {
+	raw := c.Query("users")
+	if raw == "" {
+		raw = c.PostForm("users")
+	}
+	var users []string
+	if raw != "" {
+		if err := json.Unmarshal([]byte(raw), &users); err != nil {
+			jsonMsg(c, "", common.NewError("invalid users parameter: ", err))
+			return
+		}
+	}
+	jsonObj(c, a.StatsService.GetUserRates(users), nil)
+}
+
 func (a *ApiService) CloseSessions(c *gin.Context) {
 	user := c.PostForm("u")
 	if user == "" {
@@ -350,8 +374,7 @@ func (a *ApiService) Login(c *gin.Context) {
 	jsonMsg(c, "", nil)
 }
 
-func (a *ApiService) ChangePass(c *gin.Context) {
-	loginUser := GetLoginUser(c)
+func (a *ApiService) ChangePass(c *gin.Context, loginUser string) {
 	oldPass := c.Request.FormValue("oldPass")
 	newUsername := c.Request.FormValue("newUsername")
 	newPass := c.Request.FormValue("newPass")
@@ -453,14 +476,12 @@ func (a *ApiService) LoadTokens() ([]byte, error) {
 	return a.UserService.LoadTokens()
 }
 
-func (a *ApiService) GetTokens(c *gin.Context) {
-	loginUser := GetLoginUser(c)
+func (a *ApiService) GetTokens(c *gin.Context, loginUser string) {
 	tokens, err := a.UserService.GetUserTokens(loginUser)
 	jsonObj(c, tokens, err)
 }
 
-func (a *ApiService) AddToken(c *gin.Context) {
-	loginUser := GetLoginUser(c)
+func (a *ApiService) AddToken(c *gin.Context, loginUser string) {
 	expiry := c.Request.FormValue("expiry")
 	expiryInt, err := strconv.ParseInt(expiry, 10, 64)
 	if err != nil {
@@ -472,8 +493,7 @@ func (a *ApiService) AddToken(c *gin.Context) {
 	jsonObj(c, token, err)
 }
 
-func (a *ApiService) DeleteToken(c *gin.Context) {
-	loginUser := GetLoginUser(c)
+func (a *ApiService) DeleteToken(c *gin.Context, loginUser string) {
 	tokenId := c.Request.FormValue("id")
 	err := a.UserService.DeleteToken(loginUser, tokenId)
 	jsonMsg(c, "", err)
@@ -503,4 +523,226 @@ func (a *ApiService) GetCertPing(c *gin.Context) {
 	port := c.PostForm("port")
 	tlsPing, err := util.GetTlsPing(domain, port)
 	jsonObj(c, tlsPing, err)
+}
+
+// ImportClientNodes creates one client, its inbound identity, its outbound and
+// its route per node in a single request. The panel and an API token call the
+// same service; only the actor used for audit and ownership differs.
+func (a *ApiService) ImportClientNodes(c *gin.Context, actor string) {
+	var req service.ImportRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 8<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeImportError(c, &service.ImportError{Code: "BAD_REQUEST", Message: "invalid JSON body: " + err.Error()})
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeImportError(c, &service.ImportError{Code: "BAD_REQUEST", Message: "the body must contain exactly one JSON object"})
+		return
+	}
+	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	if len(idempotencyKey) > 200 {
+		writeImportError(c, &service.ImportError{Code: "BAD_REQUEST", Message: "Idempotency-Key must be at most 200 characters"})
+		return
+	}
+	result, ierr := (&service.ImportService{}).Import(&req, actor, idempotencyKey, getHostname(c))
+	if ierr != nil {
+		writeImportError(c, ierr)
+		return
+	}
+	c.JSON(http.StatusOK, Msg{Success: true, Obj: result})
+}
+
+// ReapplyImportBatch applies a batch that committed but whose core update
+// failed. It never creates clients again.
+func (a *ApiService) ReapplyImportBatch(c *gin.Context, actor string) {
+	batchID := strings.TrimSpace(c.Query("batchId"))
+	if batchID == "" {
+		batchID = strings.TrimSpace(c.PostForm("batchId"))
+	}
+	if batchID == "" && strings.Contains(c.GetHeader("Content-Type"), "application/json") {
+		var body struct {
+			BatchID string `json:"batchId"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)).Decode(&body); err == nil {
+			batchID = strings.TrimSpace(body.BatchID)
+		}
+	}
+	if batchID == "" {
+		writeImportError(c, &service.ImportError{Code: "BAD_REQUEST", Message: "batchId is required"})
+		return
+	}
+	result, ierr := (&service.ImportService{}).Reapply(batchID, actor, getHostname(c))
+	if ierr != nil {
+		writeImportError(c, ierr)
+		return
+	}
+	c.JSON(http.StatusOK, Msg{Success: true, Obj: result})
+}
+
+// GetImportBatch reports the stored status of one batch so an operator can
+// locate it after a timeout without guessing ids.
+func (a *ApiService) GetImportBatch(c *gin.Context, actor string) {
+	batchID := strings.TrimSpace(c.Query("batchId"))
+	if batchID == "" {
+		batchID = strings.TrimSpace(c.PostForm("batchId"))
+	}
+	if batchID == "" {
+		writeImportError(c, &service.ImportError{Code: "BAD_REQUEST", Message: "batchId is required"})
+		return
+	}
+	view, ierr := (&service.ImportService{}).GetBatch(batchID, actor, getHostname(c))
+	if ierr != nil {
+		writeImportError(c, ierr)
+		return
+	}
+	c.JSON(http.StatusOK, Msg{Success: true, Obj: view})
+}
+
+func writeImportError(c *gin.Context, ierr *service.ImportError) {
+	status := http.StatusUnprocessableEntity
+	switch ierr.Code {
+	case "UNAUTHORIZED":
+		status = http.StatusUnauthorized
+	case "IDEMPOTENCY_CONFLICT", "BATCH_DATA_MISSING":
+		status = http.StatusConflict
+	case "BATCH_NOT_FOUND":
+		status = http.StatusNotFound
+	case "BATCH_FORBIDDEN":
+		status = http.StatusForbidden
+	case "DB_BUSY":
+		status = http.StatusServiceUnavailable
+	case "CORE_APPLY_FAILED", "BATCH_STATUS_UNSAVED", "BATCH_CORRUPT", "DB_ERROR", "INTERNAL":
+		status = http.StatusInternalServerError
+	case "BAD_REQUEST":
+		status = http.StatusBadRequest
+	}
+	c.JSON(status, Msg{Success: false, Msg: ierr.Message, Obj: ierr})
+}
+
+// GetSubscriptionGroups lists subscription group metadata. Tokens and links
+// are deliberately absent; one group's links are only returned by the
+// explicit GroupSummary endpoint.
+func (a *ApiService) GetSubscriptionGroups(c *gin.Context) {
+	groups, err := (&sub.GroupSubService{}).ListGroups()
+	jsonObj(c, groups, err)
+}
+
+func (a *ApiService) GetSubscriptionGroup(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Query("groupId"), 10, 64)
+	if err != nil || id == 0 {
+		jsonMsg(c, "", common.NewError("missing or invalid groupId"))
+		return
+	}
+	summary, err := (&sub.GroupSubService{}).GroupSummary(uint(id), getHostname(c))
+	jsonObj(c, summary, err)
+}
+
+func (a *ApiService) RotateSubscription(c *gin.Context) {
+	kind := c.Request.FormValue("kind")
+	id, err := strconv.ParseUint(c.Request.FormValue("id"), 10, 64)
+	if err != nil || id == 0 {
+		jsonMsg(c, "", common.NewError("missing or invalid id"))
+		return
+	}
+	base, _ := service.SubscriptionLinkBase(getHostname(c))
+	switch kind {
+	case "group":
+		if _, err := service.RotateGroupSubscriptionToken(uint(id)); err != nil {
+			jsonMsg(c, "", err)
+			return
+		}
+		group, err := service.LoadSubscriptionGroup(nil, uint(id))
+		if err != nil {
+			jsonMsg(c, "", err)
+			return
+		}
+		link, _ := service.GroupSubscriptionLink(base, group)
+		jsonObj(c, map[string]any{"kind": kind, "id": id, "subscriptionId": group.SubID, "link": link}, nil)
+	case "member":
+		if _, err := service.RotateMemberSubscriptionToken(uint(id)); err != nil {
+			jsonMsg(c, "", err)
+			return
+		}
+		var row model.SubscriptionMember
+		if err := database.GetDB().First(&row, uint(id)).Error; err != nil {
+			jsonMsg(c, "", err)
+			return
+		}
+		link, _ := service.MemberSubscriptionLink(base, &row)
+		jsonObj(c, map[string]any{"kind": kind, "id": id, "subscriptionId": row.SubID, "link": link}, nil)
+	default:
+		jsonMsg(c, "", common.NewError("kind must be group or member"))
+	}
+}
+
+func (a *ApiService) RevokeSubscription(c *gin.Context) {
+	kind := c.Request.FormValue("kind")
+	id, err := strconv.ParseUint(c.Request.FormValue("id"), 10, 64)
+	if err != nil || id == 0 {
+		jsonMsg(c, "", common.NewError("missing or invalid id"))
+		return
+	}
+	revoked, err := strconv.ParseBool(c.Request.FormValue("revoke"))
+	if err != nil {
+		jsonMsg(c, "", common.NewError("missing or invalid revoke"))
+		return
+	}
+	switch kind {
+	case "group":
+		err = service.SetGroupSubscriptionRevoked(uint(id), revoked)
+	case "member":
+		err = service.SetMemberSubscriptionRevoked(uint(id), revoked)
+	default:
+		err = common.NewError("kind must be group or member")
+	}
+	jsonMsg(c, "save", err)
+}
+
+func (a *ApiService) RenameSubscriptionGroup(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Request.FormValue("groupId"), 10, 64)
+	if err != nil || id == 0 {
+		jsonMsg(c, "", common.NewError("missing or invalid groupId"))
+		return
+	}
+	if err := service.RenameSubscriptionGroup(uint(id), c.Request.FormValue("name")); err != nil {
+		jsonMsg(c, "", err)
+		return
+	}
+	summary, err := (&sub.GroupSubService{}).GroupSummary(uint(id), getHostname(c))
+	jsonObj(c, summary, err)
+}
+
+func (a *ApiService) RemoveSubscriptionMember(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Request.FormValue("memberId"), 10, 64)
+	if err != nil || id == 0 {
+		jsonMsg(c, "", common.NewError("missing or invalid memberId"))
+		return
+	}
+	jsonMsg(c, "save", service.RemoveSubscriptionMember(uint(id)))
+}
+
+// EnableClientSubscription is the explicit opt-in for older clients. It is
+// idempotent for clients that already have a member row.
+func (a *ApiService) EnableClientSubscription(c *gin.Context) {
+	clientID, err := strconv.ParseUint(c.Request.FormValue("clientId"), 10, 64)
+	if err != nil || clientID == 0 {
+		jsonMsg(c, "", common.NewError("missing or invalid clientId"))
+		return
+	}
+	member, group, err := service.EnsureClientSubscription(uint(clientID))
+	if err != nil {
+		jsonMsg(c, "", err)
+		return
+	}
+	base, _ := service.SubscriptionLinkBase(getHostname(c))
+	link, _ := service.MemberSubscriptionLink(base, member)
+	groupLink, _ := service.GroupSubscriptionLink(base, group)
+	jsonObj(c, map[string]any{
+		"subscriptionId":      member.SubID,
+		"link":                link,
+		"groupId":             group.Id,
+		"groupSubscriptionId": group.SubID,
+		"groupLink":           groupLink,
+	}, nil)
 }

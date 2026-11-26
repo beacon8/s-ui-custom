@@ -116,8 +116,9 @@
         >
           <a-card
             size="small"
-            style="height: 210px;"
-            :body-style="{ padding: '8px 16px' }"
+            :class="{ 'gauge-card': isGauge(i) }"
+            :style="isGauge(i) ? { height: '100%' } : { height: '210px' }"
+            :body-style="isGauge(i) ? { padding: '10px 16px' } : { padding: '8px 16px' }"
           >
             <template #title>
               <a-space :size="6">
@@ -153,7 +154,7 @@
                 </a-tooltip>
               </a-space>
             </template>
-            <div style="text-align: center;">
+            <div :style="isGauge(i) ? { width: '100%' } : { textAlign: 'center' }">
               <Gauge
                 v-if="i.charAt(0) == 'g'"
                 :tiles-data="tilesData"
@@ -422,6 +423,7 @@ import UsageStats from '@/layouts/modals/UsageStats.vue'
 
 const loading = ref(false)
 const menu = ref(false)
+const isGauge = (type: string) => type.charAt(0) === 'g'
 const menuItems = [
   { title: i18n.global.t('main.gauges'), value: [
     { title: i18n.global.t('main.gauge.cpu'), value: "g-cpu" },
@@ -589,3 +591,18 @@ const restartSingbox = async () => {
   loading.value = false
 }
 </script>
+
+
+<style scoped>
+.gauge-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.gauge-card :deep(.ant-card-body) {
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+</style>

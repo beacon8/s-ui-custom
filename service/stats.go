@@ -338,6 +338,31 @@ func (s *StatsService) GetUserIPs(user string) (core.UserIPSummary, error) {
 	return tracker.UserIPs(user), nil
 }
 
+// GetUserRates returns a read-only cumulative byte snapshot for the requested
+// users. It never drains counters, so it is safe to poll while SaveStats runs.
+// Running is false when the core is stopped; the panel then shows "—" and
+// resets its baseline.
+func (s *StatsService) GetUserRates(users []string) core.UserSpeedSnapshot {
+	snapshot := core.UserSpeedSnapshot{
+		Running: false,
+		Users:   map[string]core.UserTraffic{},
+	}
+	if corePtr == nil || !corePtr.IsRunning() {
+		return snapshot
+	}
+	box := corePtr.GetInstance()
+	if box == nil {
+		return snapshot
+	}
+	tracker := box.SessionTracker()
+	if tracker == nil {
+		return snapshot
+	}
+	snapshot = tracker.UserSpeedSnapshot(users)
+	snapshot.Running = true
+	return snapshot
+}
+
 // GetSessions lists the live routed connections, narrowed to one user, inbound
 // or outbound. Sorted newest first so the panel shows fresh connections on top.
 func (s *StatsService) GetSessions(resource string, tag string) ([]core.SessionInfo, error) {

@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"net/http"
 	"sync"
 	"time"
 
@@ -17,6 +18,8 @@ type TokenInMemory struct {
 	Expiry   int64
 	Username string
 }
+
+const tokenUserKey = "API_TOKEN_USER"
 
 type APIv2Handler struct {
 	ApiService
@@ -42,12 +45,15 @@ func (a *APIv2Handler) initRouter(g *gin.RouterGroup) {
 }
 
 func (a *APIv2Handler) postHandler(c *gin.Context) {
-	username := a.findUsername(c)
+	username := a.tokenUsername(c)
 	action := c.Param("postAction")
 
 	switch action {
 	case "save":
 		a.ApiService.Save(c, username)
+	case "changePass":
+		a.ApiService.ChangePass(c, username)
+		a.ReloadTokens()
 	case "restartApp":
 		a.ApiService.RestartApp(c)
 	case "restartSb":
@@ -62,10 +68,32 @@ func (a *APIv2Handler) postHandler(c *gin.Context) {
 		a.ApiService.SubConvert(c)
 	case "importdb":
 		a.ApiService.ImportDb(c)
+	case "addToken":
+		a.ApiService.AddToken(c, username)
+		a.ReloadTokens()
+	case "deleteToken":
+		a.ApiService.DeleteToken(c, username)
+		a.ReloadTokens()
 	case "closeSessions":
 		a.ApiService.CloseSessions(c)
 	case "getCertPing":
 		a.ApiService.GetCertPing(c)
+	case "update":
+		a.ApiService.Upgrade(c)
+	case "importClientNodes":
+		a.ApiService.ImportClientNodes(c, username)
+	case "reapplyImportBatch":
+		a.ApiService.ReapplyImportBatch(c, username)
+	case "rotateSubscription":
+		a.ApiService.RotateSubscription(c)
+	case "revokeSubscription":
+		a.ApiService.RevokeSubscription(c)
+	case "renameSubscriptionGroup":
+		a.ApiService.RenameSubscriptionGroup(c)
+	case "removeSubscriptionMember":
+		a.ApiService.RemoveSubscriptionMember(c)
+	case "enableClientSubscription":
+		a.ApiService.EnableClientSubscription(c)
 	default:
 		jsonMsg(c, "failed", common.NewError("unknown action: ", action))
 	}
@@ -97,16 +125,30 @@ func (a *APIv2Handler) getHandler(c *gin.Context) {
 		a.ApiService.GetSessions(c)
 	case "userIps":
 		a.ApiService.GetUserIps(c)
+	case "userRates":
+		a.ApiService.GetUserRates(c)
 	case "logs":
 		a.ApiService.GetLogs(c)
 	case "changes":
 		a.ApiService.CheckChanges(c)
 	case "keypairs":
 		a.ApiService.GetKeypairs(c)
+	case "checkUpdate":
+		a.ApiService.CheckUpdate(c)
 	case "getdb":
 		a.ApiService.GetDb(c)
+	case "tokens":
+		a.ApiService.GetTokens(c, a.tokenUsername(c))
+	case "singbox-config":
+		a.ApiService.GetSingboxConfig(c)
 	case "checkOutbound":
 		a.ApiService.GetCheckOutbound(c)
+	case "importBatch":
+		a.ApiService.GetImportBatch(c, a.tokenUsername(c))
+	case "subscriptionGroups":
+		a.ApiService.GetSubscriptionGroups(c)
+	case "subscriptionGroup":
+		a.ApiService.GetSubscriptionGroup(c)
 	default:
 		jsonMsg(c, "failed", common.NewError("unknown action: ", action))
 	}
@@ -142,11 +184,27 @@ func (a *APIv2Handler) findUsername(c *gin.Context) string {
 func (a *APIv2Handler) checkToken(c *gin.Context) {
 	username := a.findUsername(c)
 	if username != "" {
+		c.Set(tokenUserKey, username)
 		c.Next()
 		return
 	}
-	jsonMsg(c, "", common.NewError("invalid token"))
-	c.Abort()
+	// 401, not a 200 with a message: a token client has to be able to tell a
+	// revoked or expired credential from a business error without parsing
+	// English prose.
+	c.AbortWithStatusJSON(http.StatusUnauthorized, Msg{Success: false, Msg: "invalid token"})
+}
+
+// tokenUsername is the identity checkToken already verified. Reading it from
+// the context avoids a second scan of the token list and, more importantly,
+// keeps the actor used for audit and ownership exactly the one authenticated
+// at the start of the request.
+func (a *APIv2Handler) tokenUsername(c *gin.Context) string {
+	value, ok := c.Get(tokenUserKey)
+	if !ok {
+		return ""
+	}
+	username, _ := value.(string)
+	return username
 }
 
 func (a *APIv2Handler) ReloadTokens() {

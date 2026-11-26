@@ -6,6 +6,31 @@
     @cancel="closeModal"
   >
     <a-spin :spinning="loading">
+      <a-form
+        layout="vertical"
+        class="token-base"
+      >
+        <a-form-item
+          :label="$t('admin.api.baseUrl')"
+          :extra="$t('admin.api.baseUrlHint')"
+          style="margin-bottom: 12px;"
+        >
+          <a-input
+            :value="apiBase"
+            readonly
+          >
+            <template #suffix>
+              <AppIcon
+                name="content-copy"
+                style="cursor: pointer;"
+                :aria-label="$t('copyToClipboard')"
+                @click="copyText(apiBase)"
+              />
+            </template>
+          </a-input>
+        </a-form-item>
+      </a-form>
+
       <a-alert
         v-if="newToken.token.length > 0"
         type="success"
@@ -165,6 +190,14 @@ export default {
     }
   },
   computed: {
+    apiBase(): string {
+      // BASE_URL is the real panel path, injected by the Go template. Keep it
+      // even when the panel is mounted under a non-default prefix.
+      const win = window as Window & { BASE_URL?: string }
+      const base = win.BASE_URL && win.BASE_URL.length > 0 ? win.BASE_URL : '/'
+      const normalized = base.endsWith('/') ? base : base + '/'
+      return `${window.location.origin}${normalized}apiv2`
+    },
     tokenColumns() {
       return [
         { title: '#', dataIndex: 'id', key: 'id', width: 60 },
@@ -243,7 +276,7 @@ export default {
         day: '2-digit',
       })
     },
-    copyToClipboard(txt:string) {
+    copyText(txt:string) {
       const hiddenButton = document.createElement('button')
       hiddenButton.className = 'clipboard-btn'
       document.body.appendChild(hiddenButton)
@@ -272,6 +305,9 @@ export default {
       // Perform click on hidden button to trigger copy
       hiddenButton.click()
       document.body.removeChild(hiddenButton)
+    },
+    copyToClipboard(txt:string) {
+      this.copyText(txt)
     },
     closeModal() {
       this.$emit('close')

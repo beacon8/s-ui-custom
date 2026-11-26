@@ -15,6 +15,16 @@
     :inbound-tags="inboundTags"
     @close="closeAddBulk"
   />
+  <ClientImportNodes
+    v-model="importNodesModal"
+    :visible="importNodesModal"
+    :inbound-tags="inboundTags"
+    @close="importNodesModal = false"
+  />
+  <SubscriptionsModal
+    :visible="subscriptionsModal"
+    @close="subscriptionsModal = false"
+  />
   <ClientEditBulk 
     v-model="editBulkModal"
     :visible="editBulkModal"
@@ -114,12 +124,30 @@
               </a-space>
             </a-menu-item>
             <a-menu-item
+              key="addNodes"
+              @click="importNodesModal = true"
+            >
+              <a-space>
+                <AppIcon name="server-plus" />
+                <span>{{ $t('importNodes.entry') }}</span>
+              </a-space>
+            </a-menu-item>
+            <a-menu-item
               key="editBulk"
               @click="editBulk"
             >
               <a-space>
                 <AppIcon name="account-multiple-check" />
                 <span>{{ $t('actions.editbulk') }}</span>
+              </a-space>
+            </a-menu-item>
+            <a-menu-item
+              key="subscriptions"
+              @click="subscriptionsModal = true; actionMenu = false"
+            >
+              <a-space>
+                <AppIcon name="link" />
+                <span>{{ $t('subscriptions.title') }}</span>
               </a-space>
             </a-menu-item>
             <a-menu-item
@@ -214,10 +242,11 @@
       <a-table
         :columns="headers"
         :data-source="displayedClients"
-        :pagination="displayedClients.length <= 10 ? false : { pageSize: pageSize, showSizeChanger: true, pageSizeOptions: ['10', '25', '50', '100'], onShowSizeChange: (_: number, size: number) => setItemPerPage(size) }"
+        :pagination="displayedClients.length <= 10 ? false : { current: currentPage, pageSize: pageSize, showSizeChanger: true, pageSizeOptions: ['10', '25', '50', '100'], onShowSizeChange: (_: number, size: number) => setItemPerPage(size) }"
         :scroll="{ x: 'max-content' }"
         row-key="name"
         size="small"
+        @change="onTableChange"
       >
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'enable'">
@@ -318,6 +347,13 @@
               </a-tag>
             </a-tooltip>
           </template>
+          <template v-else-if="column.key === 'speed'">
+            <a-tag
+              style="margin-inline-end: 0; font-variant-numeric: tabular-nums; white-space: nowrap;"
+            >
+              {{ speedPair(record.name) }}
+            </a-tag>
+          </template>
           <template v-else-if="column.key === 'createdAt'">
             <a-tooltip
               v-if="record.createdAt > 0"
@@ -388,6 +424,19 @@
                   </template>
                 </a-button>
               </a-tooltip>
+              <a-tooltip :title="$t('importNodes.copyPersonalSubscription')">
+                <a-button
+                  type="text"
+                  shape="circle"
+                  size="small"
+                  :aria-label="$t('importNodes.copyPersonalSubscription')"
+                  @click="copyClientSubscription(record.id)"
+                >
+                  <template #icon>
+                    <AppIcon name="link" />
+                  </template>
+                </a-button>
+              </a-tooltip>
               <a-tooltip
                 v-if="Data().enableTraffic"
                 :title="$t('stats.graphTitle')"
@@ -415,6 +464,8 @@
 import Data from '@/store/modules/data'
 import ClientModal from '@/layouts/modals/Client.vue'
 import ClientAddBulk from '@/layouts/modals/ClientAddBulk.vue'
+import ClientImportNodes from '@/layouts/modals/ClientImportNodes.vue'
+import SubscriptionsModal from '@/layouts/modals/Subscriptions.vue'
 import ClientEditBulk from '@/layouts/modals/ClientEditBulk.vue'
 import QrCode from '@/layouts/modals/QrCode.vue'
 import Stats from '@/layouts/modals/Stats.vue'
@@ -422,10 +473,13 @@ import Sessions from '@/layouts/modals/Sessions.vue'
 import UserIps from '@/layouts/modals/UserIps.vue'
 import { Client } from '@/types/clients'
 import { Inbound } from '@/types/inbounds'
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { HumanReadable } from '@/plugins/utils'
 import { i18n, locale } from '@/locales'
+import { push } from 'notivue'
 import HttpUtils from '@/plugins/httputil'
+import api from '@/plugins/api'
+import { formatSpeedPair, speedFromBytes } from '@/utils/formatSpeed'
 
 // A client as it comes back from the panel: saved, so it carries the id and
 // the timestamps that only a client built in the browser is still without.
@@ -433,6 +487,20 @@ type ClientRow = Client & {
   id: number
   createdAt: number
   onlineAt: number
+}
+
+// A rate is null until two valid snapshots from the same core instance exist.
+// The template renders null as an em dash.
+interface SpeedSample {
+  up: number | null
+  down: number | null
+}
+
+interface UserSpeedResponse {
+  running: boolean
+  instance: string
+  sampledAt: number
+  users?: Record<string, { up: number, down: number }>
 }
 
 const clients = computed((): ClientRow[] => {
@@ -494,6 +562,8 @@ const groups = computed((): string[] => {
 })
 
 const actionMenu = ref(false)
+const importNodesModal = ref(false)
+const subscriptionsModal = ref(false)
 const filterMenu = ref(false)
 const filterSettings = ref({
   enabled: false,
@@ -510,6 +580,12 @@ const filterItems = [
   { title: i18n.global.t('online'), value: 'online' },
 ]
 
+// Rates are kept per client name. They live only in this page: the two-second
+// poll must not reload the whole client list or touch the shared data store.
+const speedRates = ref<Record<string, SpeedSample>>({})
+const speedValue = (name: string, direction: 'up' | 'down'): number => speedRates.value[name]?.[direction] ?? -1
+const speedPair = (name: string): string => formatSpeedPair(speedRates.value[name]?.up ?? null, speedRates.value[name]?.down ?? null)
+
 const headers = [
   { title: i18n.global.t('client.name'), dataIndex: 'name', key: 'name', sorter: (a: ClientRow, b: ClientRow) => (a.name ?? '').localeCompare(b.name ?? '') },
   { title: i18n.global.t('enable'), dataIndex: 'enable', key: 'enable', sorter: (a: ClientRow, b: ClientRow) => Number(a.enable) - Number(b.enable) },
@@ -523,6 +599,7 @@ const headers = [
   { title: i18n.global.t('date.expiry'), dataIndex: 'expiry', key: 'expiry', sorter: (a: ClientRow, b: ClientRow) => a.expiry - b.expiry },
   { title: i18n.global.t('online'), key: 'online', sorter: (a: ClientRow, b: ClientRow) => Number(isOnline(a.name).value) - Number(isOnline(b.name).value) },
   { title: i18n.global.t('client.connections'), key: 'connections', sorter: (a: ClientRow, b: ClientRow) => activeConns(a.name) - activeConns(b.name) },
+  { title: i18n.global.t('client.speed'), key: 'speed', width: 250, sorter: (a: ClientRow, b: ClientRow) => (speedValue(a.name, 'up') + speedValue(a.name, 'down')) - (speedValue(b.name, 'up') + speedValue(b.name, 'down')) },
   { title: i18n.global.t('client.ips'), key: 'ips', sorter: (a: ClientRow, b: ClientRow) => activeIPs(a.name) - activeIPs(b.name) },
   { title: i18n.global.t('date.created'), dataIndex: 'createdAt', key: 'createdAt', sorter: (a: ClientRow, b: ClientRow) => a.createdAt - b.createdAt },
   { title: i18n.global.t('date.lastOnline'), dataIndex: 'onlineAt', key: 'onlineAt', sorter: (a: ClientRow, b: ClientRow) => a.onlineAt - b.onlineAt },
@@ -543,6 +620,166 @@ const setItemPerPage = (items: number) => {
   itemPerPage.value = items.toString()
   localStorage.setItem('items-per-page', items.toString())
 }
+
+// Pagination and the sorted data source are tracked explicitly so the poll
+// requests exactly the rows the table is showing. Ant's sorter runs inside the
+// table, hence tableData follows `extra.currentDataSource` from @change.
+const currentPage = ref(1)
+const tableData = ref<ClientRow[]>([])
+const clientSignature = computed((): string => displayedClients.value.map(c => c.name).join('\u0000'))
+const pageNames = computed((): string[] => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return tableData.value.slice(start, start + pageSize.value).map(c => c.name)
+})
+const pageNamesKey = computed((): string => pageNames.value.join('\u0000'))
+
+let speedBaseline: {
+  instance: string
+  sampledAt: number
+  users: Record<string, { up: number, down: number }>
+} | null = null
+let speedTimer: ReturnType<typeof setInterval> | null = null
+let speedRestartTimer: ReturnType<typeof setTimeout> | null = null
+let speedInFlight = false
+let speedInFlightSeq = 0
+let speedSeq = 0
+
+const clearSpeed = () => {
+  speedBaseline = null
+  speedRates.value = {}
+}
+
+const resetSpeedSampling = () => {
+  speedSeq++
+  speedInFlight = false
+  clearSpeed()
+}
+
+const stopSpeedPolling = () => {
+  if (speedTimer !== null) {
+    clearInterval(speedTimer)
+    speedTimer = null
+  }
+}
+
+const fetchSpeed = async () => {
+  if (speedInFlight || document.visibilityState !== 'visible') return
+  const names = pageNames.value
+  if (names.length === 0) {
+    clearSpeed()
+    return
+  }
+  const seq = ++speedSeq
+  speedInFlight = true
+  speedInFlightSeq = seq
+  try {
+    const response = await api.get<{ success: boolean, obj: UserSpeedResponse }>('api/userRates', {
+      params: { users: JSON.stringify(names) },
+      timeout: 5000,
+    })
+    if (seq !== speedSeq) return
+    const msg = response.data
+    if (!msg?.success || !msg.obj || !msg.obj.running || !msg.obj.instance) {
+      clearSpeed()
+      return
+    }
+    const snapshot = msg.obj
+    const previous = speedBaseline
+    if (!previous || previous.instance !== snapshot.instance) {
+      const next: Record<string, SpeedSample> = {}
+      for (const name of names) {
+        next[name] = { up: null, down: null }
+      }
+      speedBaseline = { instance: snapshot.instance, sampledAt: snapshot.sampledAt, users: snapshot.users ?? {} }
+      speedRates.value = next
+      return
+    }
+    const seconds = (snapshot.sampledAt - previous.sampledAt) / 1000
+    const next: Record<string, SpeedSample> = {}
+    for (const name of names) {
+      const before = previous.users[name]
+      const current = snapshot.users?.[name]
+      if (!before || !current || seconds <= 0) {
+        next[name] = { up: null, down: null }
+        continue
+      }
+      next[name] = {
+        up: speedFromBytes(current.up - before.up, seconds),
+        down: speedFromBytes(current.down - before.down, seconds),
+      }
+    }
+    speedBaseline = { instance: snapshot.instance, sampledAt: snapshot.sampledAt, users: snapshot.users ?? {} }
+    speedRates.value = next
+  } catch {
+    // A failed poll (core down, network, canceled request) clears the baseline
+    // so the next success is a fresh baseline and cannot produce a spike.
+    if (seq === speedSeq) clearSpeed()
+  } finally {
+    if (speedInFlightSeq === seq) speedInFlight = false
+  }
+}
+
+const startSpeedPolling = () => {
+  stopSpeedPolling()
+  resetSpeedSampling()
+  if (document.visibilityState !== 'visible') return
+  void fetchSpeed()
+  speedTimer = setInterval(() => { void fetchSpeed() }, 2000)
+}
+
+const scheduleSpeedRestart = () => {
+  if (speedRestartTimer !== null) clearTimeout(speedRestartTimer)
+  speedRestartTimer = setTimeout(() => {
+    speedRestartTimer = null
+    startSpeedPolling()
+  }, 0)
+}
+
+const onTableChange = (pagination: unknown, _filters: unknown, _sorter: unknown, extra: unknown) => {
+  const page = pagination as { current?: number, pageSize?: number } | undefined
+  const nextSize = Number(page?.pageSize)
+  if (nextSize > 0 && nextSize !== pageSize.value) setItemPerPage(nextSize)
+  const nextPage = Number(page?.current)
+  if (nextPage > 0) currentPage.value = nextPage
+  const source = (extra as { currentDataSource?: ClientRow[] } | undefined)?.currentDataSource
+  if (Array.isArray(source)) {
+    tableData.value = source
+  }
+}
+
+const onVisibilityChange = () => {
+  if (document.visibilityState === 'visible') {
+    startSpeedPolling()
+  } else {
+    stopSpeedPolling()
+    resetSpeedSampling()
+  }
+}
+
+watch(clientSignature, (signature, previous) => {
+  if (signature !== previous || tableData.value.length === 0) {
+    tableData.value = displayedClients.value
+    currentPage.value = 1
+  }
+  scheduleSpeedRestart()
+}, { immediate: true })
+
+watch(pageNamesKey, () => scheduleSpeedRestart())
+
+onMounted(() => {
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  scheduleSpeedRestart()
+})
+
+onUnmounted(() => {
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  stopSpeedPolling()
+  if (speedRestartTimer !== null) {
+    clearTimeout(speedRestartTimer)
+    speedRestartTimer = null
+  }
+  resetSpeedSampling()
+})
 
 const modal = ref({
   visible: false,
@@ -582,6 +819,18 @@ const qrcode = ref({
   visible: false,
   id: 0,
 })
+
+const copyClientSubscription = async (id: number) => {
+  const msg = await HttpUtils.post<{ link: string }>('api/enableClientSubscription', { clientId: id })
+  if (msg.success && msg.obj?.link) {
+    try {
+      await navigator.clipboard.writeText(msg.obj.link)
+      push.success({ title: i18n.global.t('success'), message: i18n.global.t('copyToClipboard') })
+    } catch {
+      push.error({ title: i18n.global.t('failed'), message: i18n.global.t('copyToClipboard') })
+    }
+  }
+}
 
 const showQrCode = (id: number) => {
   qrcode.value.id = id

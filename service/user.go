@@ -170,6 +170,10 @@ func (s *UserService) LoadTokens() ([]byte, error) {
 	}
 	var result []map[string]interface{}
 	for _, t := range tokens {
+		// A token whose user row disappeared cannot authenticate anyone.
+		if t.User == nil {
+			continue
+		}
 		result = append(result, map[string]interface{}{
 			"token":    t.Token,
 			"expiry":   t.Expiry,

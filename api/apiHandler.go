@@ -39,7 +39,10 @@ func (a *APIHandler) postHandler(c *gin.Context) {
 	case "login":
 		a.ApiService.Login(c)
 	case "changePass":
-		a.ApiService.ChangePass(c)
+		a.ApiService.ChangePass(c, loginUser)
+		// A renamed admin's tokens still belong to the same user row, but their
+		// in-memory username is stale until the next load.
+		a.apiv2.ReloadTokens()
 	case "save":
 		a.ApiService.Save(c, loginUser)
 	case "restartApp":
@@ -57,10 +60,10 @@ func (a *APIHandler) postHandler(c *gin.Context) {
 	case "importdb":
 		a.ApiService.ImportDb(c)
 	case "addToken":
-		a.ApiService.AddToken(c)
+		a.ApiService.AddToken(c, loginUser)
 		a.apiv2.ReloadTokens()
 	case "deleteToken":
-		a.ApiService.DeleteToken(c)
+		a.ApiService.DeleteToken(c, loginUser)
 		a.apiv2.ReloadTokens()
 	case "closeSessions":
 		a.ApiService.CloseSessions(c)
@@ -68,6 +71,20 @@ func (a *APIHandler) postHandler(c *gin.Context) {
 		a.ApiService.Upgrade(c)
 	case "getCertPing":
 		a.ApiService.GetCertPing(c)
+	case "importClientNodes":
+		a.ApiService.ImportClientNodes(c, loginUser)
+	case "reapplyImportBatch":
+		a.ApiService.ReapplyImportBatch(c, loginUser)
+	case "rotateSubscription":
+		a.ApiService.RotateSubscription(c)
+	case "revokeSubscription":
+		a.ApiService.RevokeSubscription(c)
+	case "renameSubscriptionGroup":
+		a.ApiService.RenameSubscriptionGroup(c)
+	case "removeSubscriptionMember":
+		a.ApiService.RemoveSubscriptionMember(c)
+	case "enableClientSubscription":
+		a.ApiService.EnableClientSubscription(c)
 	default:
 		jsonMsg(c, "failed", common.NewError("unknown action: ", action))
 	}
@@ -101,6 +118,8 @@ func (a *APIHandler) getHandler(c *gin.Context) {
 		a.ApiService.GetSessions(c)
 	case "userIps":
 		a.ApiService.GetUserIps(c)
+	case "userRates":
+		a.ApiService.GetUserRates(c)
 	case "logs":
 		a.ApiService.GetLogs(c)
 	case "changes":
@@ -112,11 +131,17 @@ func (a *APIHandler) getHandler(c *gin.Context) {
 	case "getdb":
 		a.ApiService.GetDb(c)
 	case "tokens":
-		a.ApiService.GetTokens(c)
+		a.ApiService.GetTokens(c, GetLoginUser(c))
 	case "singbox-config":
 		a.ApiService.GetSingboxConfig(c)
 	case "checkOutbound":
 		a.ApiService.GetCheckOutbound(c)
+	case "importBatch":
+		a.ApiService.GetImportBatch(c, GetLoginUser(c))
+	case "subscriptionGroups":
+		a.ApiService.GetSubscriptionGroups(c)
+	case "subscriptionGroup":
+		a.ApiService.GetSubscriptionGroup(c)
 	default:
 		jsonMsg(c, "failed", common.NewError("unknown action: ", action))
 	}

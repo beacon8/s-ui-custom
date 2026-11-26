@@ -45,8 +45,12 @@ func LinkGenerator(clientConfig json.RawMessage, i *model.Inbound, hostname stri
 	}
 
 	var Addrs []map[string]interface{}
-	if err := json.Unmarshal(i.Addrs, &Addrs); err != nil {
-		return []string{}
+	// An inbound saved without addrs has nil here, not "[]"; json.Unmarshal(nil)
+	// is an error, and the old code then returned no links at all.
+	if len(i.Addrs) > 0 {
+		if err := json.Unmarshal(i.Addrs, &Addrs); err != nil {
+			return []string{}
+		}
 	}
 	if len(Addrs) == 0 {
 		Addrs = append(Addrs, map[string]interface{}{

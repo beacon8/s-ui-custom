@@ -7,233 +7,227 @@
     @close="enableEditor = false"
     @save="saveEditor"
   />
-  <a-card size="small">
-    <a-row
-      v-if="optionMixed"
-      :gutter="[12, 12]"
+  <div class="sub-pane clash-pane">
+    <a-form
+      layout="vertical"
+      class="sub-form"
     >
-      <a-col
-        :xs="24"
-        :sm="12"
-        :md="6"
-        :lg="4"
-      >
-        <a-form-item
-          :label="$t('setting.mixedPort')"
-          style="margin-bottom: 0;"
+      <div class="clash-default-row">
+        <div class="clash-switches">
+          <a-space>
+            <a-switch v-model:checked="subClashNoDefGrp" />
+            <span>{{ $t('setting.clashNoDefGrp') }}</span>
+          </a-space>
+          <a-space>
+            <a-switch v-model:checked="subClashSprtAll" />
+            <span>{{ $t('setting.clashSprtAll') }}</span>
+          </a-space>
+          <a-space>
+            <a-switch v-model:checked="subClashUdp" />
+            <span>{{ $t('setting.clashUdp') }}</span>
+          </a-space>
+        </div>
+        <a-flex
+          class="sub-actions"
+          justify="end"
+          gap="small"
         >
-          <a-input-number
-            v-model:value="mixedPort"
-            :min="1"
-            :max="65535"
-            style="width: 100%"
-          />
-        </a-form-item>
-      </a-col>
-      <a-col
-        :xs="24"
-        :sm="12"
-        :md="6"
-        :lg="4"
-        style="display: flex; align-items: center;"
-      >
-        <a-space>
-          <a-switch v-model:checked="allowLan" />
-          <span>{{ $t('types.ts.allowLanAccess') }}</span>
-        </a-space>
-      </a-col>
-    </a-row>
-    <a-row
-      v-if="optionExt || optionLog"
-      :gutter="[12, 12]"
-      style="margin-top: 12px;"
-    >
-      <a-col
-        v-if="optionExt"
-        :xs="24"
-        :sm="12"
-        :md="6"
-        :lg="4"
-      >
-        <a-form-item
-          :label="$t('basic.exp.extController')"
-          style="margin-bottom: 0;"
-        >
-          <a-input v-model:value="externalController" />
-        </a-form-item>
-      </a-col>
-      <a-col
-        v-if="optionLog"
-        :xs="24"
-        :sm="12"
-        :md="6"
-        :lg="4"
-      >
-        <a-form-item
-          :label="$t('basic.log.title') + ' - ' + $t('basic.log.level')"
-          style="margin-bottom: 0;"
-        >
-          <a-select
-            v-model:value="logLevel"
-            style="width: 100%"
+          <a-button
+            type="default"
+            @click="openEditor"
           >
-            <a-select-option
-              v-for="item in ['debug', 'info', 'warning', 'error']"
-              :key="item"
-              :value="item"
+            {{ $t('editor') }}
+          </a-button>
+          <a-popover
+            v-model:open="menu"
+            trigger="click"
+            placement="left"
+          >
+            <template #content>
+              <a-flex
+                vertical
+                gap="small"
+              >
+                <a-space>
+                  <a-switch v-model:checked="optionMixed" />
+                  <span>{{ $t('setting.mixedPort') }}</span>
+                </a-space>
+                <a-space>
+                  <a-switch v-model:checked="optionTun" />
+                  <span>{{ $t('setting.tun') }}</span>
+                </a-space>
+                <a-space>
+                  <a-switch v-model:checked="optionExt" />
+                  <span>{{ $t('basic.exp.extController') }}</span>
+                </a-space>
+                <a-space>
+                  <a-switch v-model:checked="optionLog" />
+                  <span>{{ $t('basic.log.title') }}</span>
+                </a-space>
+                <a-space>
+                  <a-switch v-model:checked="optionDns" />
+                  <span>{{ $t('pages.dns') }}</span>
+                </a-space>
+                <a-space>
+                  <a-switch v-model:checked="optionRules" />
+                  <span>{{ $t('pages.rules') }}</span>
+                </a-space>
+              </a-flex>
+            </template>
+            <a-button type="default">
+              {{ $t('setting.jsonSubOptions') }}
+            </a-button>
+          </a-popover>
+        </a-flex>
+      </div>
+      <a-row
+        v-if="optionMixed"
+        :gutter="[12, 12]"
+      >
+        <a-col
+          :xs="24"
+          :sm="12"
+          :md="6"
+          :lg="4"
+        >
+          <a-form-item
+            :label="$t('setting.mixedPort')"
+            style="margin-bottom: 0;"
+          >
+            <a-input-number
+              v-model:value="mixedPort"
+              :min="1"
+              :max="65535"
+              style="width: 100%"
+            />
+          </a-form-item>
+        </a-col>
+        <a-col
+          :xs="24"
+          :sm="12"
+          :md="6"
+          :lg="4"
+        >
+          <a-form-item
+            :label="$t('types.ts.allowLanAccess')"
+            style="margin-bottom: 0;"
+          >
+            <div class="switch-control">
+              <a-switch v-model:checked="allowLan" />
+            </div>
+          </a-form-item>
+        </a-col>
+      </a-row>
+      <a-row
+        v-if="optionExt || optionLog"
+        :gutter="[12, 12]"
+        style="margin-top: 12px;"
+      >
+        <a-col
+          v-if="optionExt"
+          :xs="24"
+          :sm="12"
+          :md="6"
+          :lg="4"
+        >
+          <a-form-item
+            :label="$t('basic.exp.extController')"
+            style="margin-bottom: 0;"
+          >
+            <a-input v-model:value="externalController" />
+          </a-form-item>
+        </a-col>
+        <a-col
+          v-if="optionLog"
+          :xs="24"
+          :sm="12"
+          :md="6"
+          :lg="4"
+        >
+          <a-form-item
+            :label="$t('basic.log.title') + ' - ' + $t('basic.log.level')"
+            style="margin-bottom: 0;"
+          >
+            <a-select
+              v-model:value="logLevel"
+              style="width: 100%"
             >
-              {{ item }}
-            </a-select-option>
-          </a-select>
-        </a-form-item>
-      </a-col>
-    </a-row>
-    <a-row
-      v-if="optionTun || optionDns"
-      :gutter="[12, 12]"
-      style="margin-top: 12px;"
-    >
-      <a-col
-        v-if="optionTun"
-        :xs="24"
-        :sm="12"
-        :md="6"
-        :lg="4"
+              <a-select-option
+                v-for="item in ['debug', 'info', 'warning', 'error']"
+                :key="item"
+                :value="item"
+              >
+                {{ item }}
+              </a-select-option>
+            </a-select>
+          </a-form-item>
+        </a-col>
+      </a-row>
+      <a-row
+        v-if="optionTun || optionDns"
+        :gutter="[12, 12]"
+        style="margin-top: 12px;"
       >
-        <a-space>
-          <a-switch v-model:checked="tun" />
-          <span>{{ $t('setting.tun') }}</span>
-        </a-space>
-      </a-col>
-      <a-col
-        v-if="optionDns"
-        :xs="24"
-        :sm="12"
-        :md="6"
-        :lg="4"
-      >
-        <a-space>
-          <a-switch v-model:checked="dns" />
-          <span>{{ $t('pages.dns') }}</span>
-        </a-space>
-      </a-col>
-    </a-row>
-    <a-row
-      v-if="optionRules"
-      :gutter="[12, 12]"
-      style="margin-top: 12px;"
-    >
-      <a-col
-        :xs="24"
-        :sm="24"
-        :md="12"
-        :lg="8"
-      >
-        <a-form-item
-          :label="$t('pages.rules')"
-          style="margin-bottom: 0;"
+        <a-col
+          v-if="optionTun"
+          :xs="24"
+          :sm="12"
+          :md="6"
+          :lg="4"
         >
-          <a-select
-            v-model:value="rules"
-            :options="rulesIP"
-            :field-names="{ label: 'title', value: 'value' }"
-            mode="multiple"
-            style="width: 100%"
-          />
-        </a-form-item>
-      </a-col>
-    </a-row>
-    <a-row
-      :gutter="[12, 12]"
-      style="margin-top: 12px;"
-    >
-      <a-col
-        :xs="24"
-        :sm="12"
-        :md="6"
-        :lg="4"
-      >
-        <a-space>
-          <a-switch v-model:checked="subClashNoDefGrp" />
-          <span>{{ $t('setting.clashNoDefGrp') }}</span>
-        </a-space>
-      </a-col>
-      <a-col
-        :xs="24"
-        :sm="12"
-        :md="6"
-        :lg="4"
-      >
-        <a-space>
-          <a-switch v-model:checked="subClashSprtAll" />
-          <span>{{ $t('setting.clashSprtAll') }}</span>
-        </a-space>
-      </a-col>
-      <a-col
-        :xs="24"
-        :sm="12"
-        :md="6"
-        :lg="4"
-      >
-        <a-space>
-          <a-switch v-model:checked="subClashUdp" />
-          <span>{{ $t('setting.clashUdp') }}</span>
-        </a-space>
-      </a-col>
-    </a-row>
-    <a-flex
-      justify="end"
-      gap="small"
-      style="margin-top: 12px;"
-    >
-      <a-button
-        type="default"
-        @click="openEditor"
-      >
-        {{ $t('editor') }}
-      </a-button>
-      <a-popover
-        v-model:open="menu"
-        trigger="click"
-        placement="left"
-      >
-        <template #content>
-          <a-flex
-            vertical
-            gap="small"
+          <a-form-item
+            :label="$t('setting.tun')"
+            style="margin-bottom: 0;"
           >
-            <a-space>
-              <a-switch v-model:checked="optionMixed" />
-              <span>{{ $t('setting.mixedPort') }}</span>
-            </a-space>
-            <a-space>
-              <a-switch v-model:checked="optionTun" />
-              <span>{{ $t('setting.tun') }}</span>
-            </a-space>
-            <a-space>
-              <a-switch v-model:checked="optionExt" />
-              <span>{{ $t('basic.exp.extController') }}</span>
-            </a-space>
-            <a-space>
-              <a-switch v-model:checked="optionLog" />
-              <span>{{ $t('basic.log.title') }}</span>
-            </a-space>
-            <a-space>
-              <a-switch v-model:checked="optionDns" />
-              <span>{{ $t('pages.dns') }}</span>
-            </a-space>
-            <a-space>
-              <a-switch v-model:checked="optionRules" />
-              <span>{{ $t('pages.rules') }}</span>
-            </a-space>
-          </a-flex>
-        </template>
-        <a-button type="default">
-          {{ $t('setting.jsonSubOptions') }}
-        </a-button>
-      </a-popover>
-    </a-flex>
-  </a-card>
+            <div class="switch-control">
+              <a-switch v-model:checked="tun" />
+            </div>
+          </a-form-item>
+        </a-col>
+        <a-col
+          v-if="optionDns"
+          :xs="24"
+          :sm="12"
+          :md="6"
+          :lg="4"
+        >
+          <a-form-item
+            :label="$t('pages.dns')"
+            style="margin-bottom: 0;"
+          >
+            <div class="switch-control">
+              <a-switch v-model:checked="dns" />
+            </div>
+          </a-form-item>
+        </a-col>
+      </a-row>
+      <a-row
+        v-if="optionRules"
+        :gutter="[12, 12]"
+        style="margin-top: 12px;"
+      >
+        <a-col
+          :xs="24"
+          :sm="24"
+          :md="12"
+          :lg="8"
+        >
+          <a-form-item
+            :label="$t('pages.rules')"
+            style="margin-bottom: 0;"
+          >
+            <a-select
+              v-model:value="rules"
+              :options="rulesIP"
+              :field-names="{ label: 'title', value: 'value' }"
+              mode="multiple"
+              style="width: 100%"
+            />
+          </a-form-item>
+        </a-col>
+      </a-row>
+    </a-form>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -448,3 +442,74 @@ function updateMetaJson(data:unknown, key:string) {
   metaJson.value = newMetaJson
 }
 </script>
+<style scoped>
+.sub-pane {
+  min-width: 0;
+}
+
+.clash-default-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.clash-switches {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+}
+
+.sub-actions {
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.clash-pane > .ant-row {
+  margin-top: 12px;
+}
+
+.sub-form {
+  min-width: 0;
+  overflow-x: clip;
+}
+
+.sub-form .ant-form-item {
+  margin-bottom: 0;
+}
+
+.switch-control {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+}
+
+@media (max-width: 575px) {
+  .clash-default-row {
+    align-items: flex-start;
+  }
+
+  .clash-switches {
+    width: 100%;
+  }
+
+  .sub-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+</style>
+
+<style scoped>
+.clash-default-row .sub-actions {
+  width: auto;
+}
+
+@media (max-width: 575px) {
+  .clash-default-row .sub-actions {
+    width: 100%;
+  }
+}
+</style>

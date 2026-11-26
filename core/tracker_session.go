@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
@@ -28,6 +29,36 @@ import (
 type Counter struct {
 	read  *atomic.Int64
 	write *atomic.Int64
+}
+
+// trackerInstanceSeq distinguishes trackers across core restarts. The panel
+// uses it to drop a stale speed baseline instead of comparing counters from
+// two different boxes.
+var trackerInstanceSeq atomic.Uint64
+
+// userTrafficTotal is traffic already drained by GetStats. Live counters are
+// added on top when a speed snapshot is taken, so bytes recorded between two
+// panel polls never disappear when the 10s stats job runs.
+type userTrafficTotal struct {
+	up   int64
+	down int64
+}
+
+// UserTraffic is one user's cumulative bytes in a speed snapshot. Up is what
+// the client sent into the proxy, Down is what the proxy sent back.
+type UserTraffic struct {
+	Up   int64 `json:"up"`
+	Down int64 `json:"down"`
+}
+
+// UserSpeedSnapshot is a read-only, non-destructive view of per-user byte
+// counters. SampledAt is Unix milliseconds; the panel divides byte deltas by
+// the actual interval between two snapshots.
+type UserSpeedSnapshot struct {
+	Running   bool                   `json:"running"`
+	Instance  string                 `json:"instance"`
+	SampledAt int64                  `json:"sampledAt"`
+	Users     map[string]UserTraffic `json:"users"`
 }
 
 // UserRate is a client's bandwidth cap in Mbps. Zero means unlimited.
@@ -192,6 +223,9 @@ type SessionTracker struct {
 	ipv4PrefixLen int
 	ipv6PrefixLen int
 	ipLimitDryRun bool
+
+	instanceID string
+	userTotals map[string]*userTrafficTotal
 	// nextID only has to be unique among live sessions, so it is a counter
 	// rather than a UUID: this runs on every connection.
 	nextID uint64
@@ -210,6 +244,8 @@ func NewSessionTracker() *SessionTracker {
 		userIPs:       make(map[string]map[netip.Prefix]*userIPState),
 		ipv4PrefixLen: 32,
 		ipv6PrefixLen: 64,
+		instanceID:    fmt.Sprintf("%d-%d", time.Now().UnixNano(), trackerInstanceSeq.Add(1)),
+		userTotals:    make(map[string]*userTrafficTotal),
 	}
 }
 
@@ -885,9 +921,67 @@ func (t *SessionTracker) GetStats() *[]model.Stats {
 		appendStat("outbound", outbound, counter.write.Swap(0), counter.read.Swap(0))
 	}
 	for user, counter := range t.users {
-		appendStat("user", user, counter.write.Swap(0), counter.read.Swap(0))
+		up := counter.read.Swap(0)
+		down := counter.write.Swap(0)
+		total := t.userTotals[user]
+		if total == nil {
+			total = &userTrafficTotal{}
+			t.userTotals[user] = total
+		}
+		total.up += up
+		total.down += down
+		appendStat("user", user, down, up)
 	}
 	return &s
+}
+
+// UserSpeedSnapshot returns cumulative per-user byte counters without draining
+// them. GetStats is destructive, so speed polling must never call it; instead
+// this reads drained totals plus the live counters under the same lock. That
+// keeps short connections visible between two 10s accounting cycles and lets
+// any number of panels read independently.
+func (t *SessionTracker) UserSpeedSnapshot(users []string) UserSpeedSnapshot {
+	t.access.Lock()
+	defer t.access.Unlock()
+	snapshot := UserSpeedSnapshot{
+		Running:   true,
+		Instance:  t.instanceID,
+		SampledAt: time.Now().UnixMilli(),
+		Users:     make(map[string]UserTraffic, len(users)),
+	}
+	seen := make(map[string]struct{}, len(users))
+	addUser := func(user string) {
+		if user == "" {
+			return
+		}
+		if _, loaded := seen[user]; loaded {
+			return
+		}
+		seen[user] = struct{}{}
+		var total UserTraffic
+		if drained := t.userTotals[user]; drained != nil {
+			total.Up = drained.up
+			total.Down = drained.down
+		}
+		if counter, loaded := t.users[user]; loaded {
+			total.Up += counter.read.Load()
+			total.Down += counter.write.Load()
+		}
+		snapshot.Users[user] = total
+	}
+	if len(users) == 0 {
+		for user := range t.users {
+			addUser(user)
+		}
+		for user := range t.userTotals {
+			addUser(user)
+		}
+		return snapshot
+	}
+	for _, user := range users {
+		addUser(user)
+	}
+	return snapshot
 }
 
 // Sessions returns a snapshot of the live sessions, newest counters included.

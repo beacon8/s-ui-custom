@@ -72,6 +72,8 @@ export default {
     charts: "نمودارها",
     infos: "داده‌ها",
     gauge: {
+      noData: "داده‌ای نیست",
+      disabled: "فعال نیست",
       cpu: "سنجش پردازنده",
       mem: "سنجش حافظه",
       dsk: "سنجش دیسک",
@@ -294,6 +296,7 @@ export default {
     delayStartHint: "شمارش از اولین اتصال آغاز می‌شود",
     connections: "اتصال‌ها",
     connectionsHint: "اتصال‌های فعلی {current} / محدودیت {limit}؛ ∞ یعنی بدون محدودیت",
+    speed: "سرعت لحظه‌ای",
     upRate: "محدودیت آپلود",
     downRate: "محدودیت دانلود",
     rateHint: "0 یعنی بدون محدودیت؛ برای همه ورودی‌های این کلاینت مشترک است؛ حداکثر 17179 Mbps",
