@@ -32,6 +32,7 @@ type ApiService struct {
 	service.ServicesService
 	service.PanelService
 	service.StatsService
+	service.OutboundAddressService
 	service.ServerService
 	service.UpdateService
 }
@@ -285,6 +286,26 @@ func (a *ApiService) GetUserRates(c *gin.Context) {
 		}
 	}
 	jsonObj(c, a.StatsService.GetUserRates(users), nil)
+}
+
+// GetOutboundAddresses returns the configured server address of the outbound
+// each visible client is routed to. It reads the current config only and never
+// dials the network. The frontend sends a JSON array because client names may
+// contain commas.
+func (a *ApiService) GetOutboundAddresses(c *gin.Context) {
+	raw := c.Query("users")
+	if raw == "" {
+		raw = c.PostForm("users")
+	}
+	var users []string
+	if raw != "" {
+		if err := json.Unmarshal([]byte(raw), &users); err != nil {
+			jsonMsg(c, "", common.NewError("invalid users parameter: ", err))
+			return
+		}
+	}
+	result, err := a.OutboundAddressService.GetOutboundAddresses(users)
+	jsonObj(c, result, err)
 }
 
 func (a *ApiService) CloseSessions(c *gin.Context) {

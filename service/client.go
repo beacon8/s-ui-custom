@@ -409,53 +409,237 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 		if err != nil {
 			return nil, err
 		}
-	case "delbulk":
-		var ids []uint
-		err = json.Unmarshal(data, &ids)
-		if err != nil {
-			return nil, err
-		}
-		for _, id := range ids {
-			var client model.Client
-			err = tx.Where("id = ?", id).First(&client).Error
-			if err != nil {
-				return nil, err
-			}
-			var clientInbounds []uint
-			err = json.Unmarshal(client.Inbounds, &clientInbounds)
-			if err != nil {
-				return nil, err
-			}
-			inboundIds = common.UnionUintArray(inboundIds, clientInbounds)
-		}
-		err = tx.Where("id in ?", ids).Delete(model.Client{}).Error
-		if err != nil {
-			return nil, err
-		}
-	case "del":
-		var id uint
-		err = json.Unmarshal(data, &id)
-		if err != nil {
-			return nil, err
-		}
-		var client model.Client
-		err = tx.Where("id = ?", id).First(&client).Error
-		if err != nil {
-			return nil, err
-		}
-		err = json.Unmarshal(client.Inbounds, &inboundIds)
-		if err != nil {
-			return nil, err
-		}
-		err = tx.Where("id = ?", id).Delete(model.Client{}).Error
-		if err != nil {
-			return nil, err
-		}
 	default:
 		return nil, common.NewErrorf("unknown action: %s", act)
 	}
 
 	return inboundIds, nil
+}
+
+// clientDeleteIDs normalizes the single-id and bulk-id payloads used by the
+// clients delete actions.
+func clientDeleteIDs(act string, data json.RawMessage) ([]uint, error) {
+	if act == "del" {
+		var id uint
+		if err := json.Unmarshal(data, &id); err != nil {
+			return nil, err
+		}
+		return []uint{id}, nil
+	}
+	var ids []uint
+	if err := json.Unmarshal(data, &ids); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// DeleteClients removes clients together with the outbounds and top-level
+// auth_user routes that were generated for them. A route is only removed when
+// every auth_user it names is being deleted and its outbound is the generated
+// out-<client> tag; shared or conditional rules are left untouched. The second
+// return value reports whether the running core must be restarted because its
+// route/outbound set changed.
+func (s *ClientService) DeleteClients(tx *gorm.DB, ids []uint) ([]uint, bool, error) {
+	var inboundIds []uint
+	if len(ids) == 0 {
+		return inboundIds, false, nil
+	}
+	// Keep the IN list below SQLite's bound-variable limit; a select-all across
+	// many pages can legitimately exceed it.
+	const deleteChunk = 400
+	var clients []model.Client
+	for start := 0; start < len(ids); start += deleteChunk {
+		end := start + deleteChunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		var batch []model.Client
+		if err := tx.Where("id in ?", ids[start:end]).Find(&batch).Error; err != nil {
+			return nil, false, err
+		}
+		clients = append(clients, batch...)
+	}
+	if len(clients) == 0 {
+		return inboundIds, false, nil
+	}
+	names := make(map[string]bool, len(clients))
+	for _, client := range clients {
+		names[client.Name] = true
+		var clientInbounds []uint
+		if err := json.Unmarshal(client.Inbounds, &clientInbounds); err != nil {
+			return nil, false, err
+		}
+		inboundIds = common.UnionUintArray(inboundIds, clientInbounds)
+	}
+
+	changed, err := s.removeClientRoutes(tx, names)
+	if err != nil {
+		return nil, false, err
+	}
+	for start := 0; start < len(ids); start += deleteChunk {
+		end := start + deleteChunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		if err = tx.Where("id in ?", ids[start:end]).Delete(model.Client{}).Error; err != nil {
+			return nil, false, err
+		}
+	}
+	if err = DeleteClientSubscriptions(tx, ids); err != nil {
+		return nil, false, err
+	}
+	return inboundIds, changed, nil
+}
+
+func authUserNames(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var names []string
+	if err := json.Unmarshal(raw, &names); err == nil {
+		return names
+	}
+	var name string
+	if err := json.Unmarshal(raw, &name); err == nil && name != "" {
+		return []string{name}
+	}
+	return nil
+}
+
+// removeClientRoutes deletes the generated route/outbound pair for each name.
+// The stored config is updated in the same transaction as the outbound rows.
+func (s *ClientService) removeClientRoutes(tx *gorm.DB, names map[string]bool) (bool, error) {
+	var setting model.Setting
+	if err := tx.Where("key = ?", "config").Limit(1).Find(&setting).Error; err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(setting.Value) == "" {
+		return false, nil
+	}
+	var cfg SingBoxConfig
+	if err := json.Unmarshal([]byte(setting.Value), &cfg); err != nil {
+		return false, common.NewError("cannot read the stored route config: ", err)
+	}
+	route := map[string]json.RawMessage{}
+	if len(cfg.Route) > 0 {
+		if err := json.Unmarshal(cfg.Route, &route); err != nil {
+			return false, common.NewError("cannot read route: ", err)
+		}
+	}
+	var rules []json.RawMessage
+	if raw, ok := route["rules"]; ok && len(raw) > 0 {
+		if err := json.Unmarshal(raw, &rules); err != nil {
+			return false, common.NewError("cannot read route rules: ", err)
+		}
+	}
+
+	removedTags := make(map[string]bool)
+	removedRule := false
+	kept := make([]json.RawMessage, 0, len(rules))
+	for _, rule := range rules {
+		var probe struct {
+			AuthUser json.RawMessage `json:"auth_user"`
+			Action   string          `json:"action"`
+			Outbound string          `json:"outbound"`
+			Type     string          `json:"type"`
+			Invert   bool            `json:"invert"`
+		}
+		if err := json.Unmarshal(rule, &probe); err != nil {
+			kept = append(kept, rule)
+			continue
+		}
+		users := authUserNames(probe.AuthUser)
+		// Only simple top-level auth_user rules are safe to delete. Logical or
+		// inverted rules can affect other users, so they stay untouched.
+		if len(users) == 0 || probe.Type == "logical" || probe.Invert {
+			kept = append(kept, rule)
+			continue
+		}
+		allDeleted := true
+		for _, user := range users {
+			if !names[user] {
+				allDeleted = false
+				break
+			}
+		}
+		if !allDeleted {
+			kept = append(kept, rule)
+			continue
+		}
+		if probe.Outbound != "" {
+			removedTags[probe.Outbound] = true
+		}
+		removedRule = true
+	}
+	if !removedRule {
+		return false, nil
+	}
+
+	// Keep an outbound that is still the route.final or referenced by a
+	// surviving rule; deleting it would make the stored config invalid.
+	referenced := make(map[string]bool)
+	for _, rule := range kept {
+		var probe struct {
+			Outbound string `json:"outbound"`
+		}
+		if json.Unmarshal(rule, &probe) == nil && probe.Outbound != "" {
+			referenced[probe.Outbound] = true
+		}
+	}
+	referenced[routeFinal(route)] = true
+	for tag := range removedTags {
+		if referenced[tag] {
+			delete(removedTags, tag)
+		}
+	}
+
+	encodedRules, err := json.Marshal(kept)
+	if err != nil {
+		return false, err
+	}
+	route["rules"] = encodedRules
+	encodedRoute, err := json.Marshal(route)
+	if err != nil {
+		return false, err
+	}
+	cfg.Route = encodedRoute
+	encodedConfig, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return false, err
+	}
+	if err = tx.Model(model.Setting{}).Where("key = ?", "config").Update("value", string(encodedConfig)).Error; err != nil {
+		return false, err
+	}
+	for tag := range removedTags {
+		var outbound model.Outbound
+		err := tx.Where("tag = ?", tag).First(&outbound).Error
+		if err == gorm.ErrRecordNotFound {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		// Built-in outbounds are shared defaults, not per-client resources.
+		if outbound.Type == "direct" || outbound.Type == "block" {
+			continue
+		}
+		if err = tx.Where("tag = ?", tag).Delete(model.Outbound{}).Error; err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func routeFinal(route map[string]json.RawMessage) string {
+	raw, ok := route["final"]
+	if !ok {
+		return ""
+	}
+	var final string
+	if json.Unmarshal(raw, &final) != nil {
+		return ""
+	}
+	return final
 }
 
 // preserveServerOwnedFields restores the columns the panel maintains itself.

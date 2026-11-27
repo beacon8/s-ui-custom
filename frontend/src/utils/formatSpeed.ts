@@ -28,7 +28,8 @@ export function formatSpeedPair(
   if (upBitsPerSecond == null || downBitsPerSecond == null) {
     return '—'
   }
-  return `↑ ${formatSpeed(upBitsPerSecond)} / ↓ ${formatSpeed(downBitsPerSecond)}`
+  // Download is shown first; the arrows make the direction explicit.
+  return `↓ ${formatSpeed(downBitsPerSecond)} / ↑ ${formatSpeed(upBitsPerSecond)}`
 }
 
 // Converts a byte delta and the actual interval between two samples into

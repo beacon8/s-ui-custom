@@ -80,9 +80,32 @@
       </a-button>
     </template>
   </a-modal>
+  <a-modal
+    v-model:open="batchDeleteModal"
+    :title="$t('actions.delbulk')"
+    :width="420"
+  >
+    <p>{{ $t('client.deleteSelectedConfirm', { count: selectedNames.length }) }}</p>
+    <template #footer>
+      <a-button
+        type="default"
+        @click="batchDeleteModal = false"
+      >
+        {{ $t('no') }}
+      </a-button>
+      <a-button
+        type="primary"
+        danger
+        :loading="batchDeleteLoading"
+        @click="deleteSelected"
+      >
+        {{ $t('yes') }}
+      </a-button>
+    </template>
+  </a-modal>
   <a-row
     :gutter="[12, 12]"
-    justify="center"
+    justify="start"
     align="middle"
     style="margin-bottom: 12px;"
   >
@@ -164,6 +187,27 @@
       </a-dropdown>
     </a-col>
     <a-col>
+      <a-button
+        danger
+        :disabled="selectedNames.length === 0"
+        @click="confirmBatchDelete"
+      >
+        {{ $t('actions.delbulk') }}<template v-if="selectedNames.length"> ({{ selectedNames.length }})</template>
+      </a-button>
+    </a-col>
+    <a-col class="client-search-col">
+      <a-input
+        v-model:value="searchQuery"
+        allow-clear
+        :placeholder="$t('client.searchPlaceholder')"
+        class="client-search"
+      >
+        <template #prefix>
+          <AppIcon name="magnify" />
+        </template>
+      </a-input>
+    </a-col>
+    <a-col>
       <a-popover
         v-model:open="filterMenu"
         trigger="click"
@@ -242,12 +286,26 @@
       <a-table
         :columns="headers"
         :data-source="displayedClients"
-        :pagination="displayedClients.length <= 10 ? false : { current: currentPage, pageSize: pageSize, showSizeChanger: true, pageSizeOptions: ['10', '25', '50', '100'], onShowSizeChange: (_: number, size: number) => setItemPerPage(size) }"
+        :pagination="paginationConfig"
+        :row-selection="rowSelection"
         :scroll="{ x: 'max-content' }"
         row-key="name"
         size="small"
         @change="onTableChange"
       >
+        <template #footer>
+          <div class="client-table-footer">
+            <span>
+              {{ $t('client.totalItems', { total: clients.length }) }}
+              <template v-if="searchQuery.trim()">
+                · {{ $t('client.filteredItems', { count: displayedClients.length }) }}
+              </template>
+            </span>
+            <span v-if="selectedNames.length" class="client-selected-count">
+              {{ $t('client.selectedItems', { count: selectedNames.length }) }}
+            </span>
+          </div>
+        </template>
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'enable'">
             <a-switch
@@ -277,6 +335,88 @@
             </a-tooltip>
             <span v-else>{{ record.inbounds?.length }}</span>
           </template>
+          <template v-else-if="column.key === 'address'">
+            <div class="address-cell">
+              <template v-if="addressEntry(record.name)?.status === 'split'">
+                <a-tooltip :title="$t('client.outboundSplitHint')">
+                  <a-tag>{{ $t('client.outboundSplit') }}</a-tag>
+                </a-tooltip>
+              </template>
+              <template v-else-if="addressEntry(record.name)?.status === 'unbound'">
+                <a-tooltip :title="$t('client.outboundUnboundHint')">
+                  <span class="address-muted">{{ $t('client.outboundUnbound') }}</span>
+                </a-tooltip>
+              </template>
+              <template v-else-if="addressEntry(record.name)?.status === 'direct'">
+                <a-tooltip :title="addressEntry(record.name)?.outbound">
+                  <a-tag>{{ $t('client.outboundDirect') }}</a-tag>
+                </a-tooltip>
+              </template>
+              <template v-else-if="addressEntry(record.name)?.status === 'multi'">
+                <a-tooltip :title="addressEntry(record.name)?.outbound">
+                  <a-tag>{{ $t('client.outboundMulti') }}</a-tag>
+                </a-tooltip>
+              </template>
+              <template v-else-if="addressEntry(record.name)?.status === 'ok'">
+                <a-tooltip placement="left">
+                  <template #title>
+                    <div>{{ $t('client.outboundLabel') }}: {{ addressEntry(record.name)?.outbound }}</div>
+                    <div>{{ $t('client.outboundEndpoint') }}: {{ addressWithPort(record.name) }}</div>
+                  </template>
+                  <span class="address-text">{{ addressEntry(record.name)?.address }}</span>
+                </a-tooltip>
+                <a-tooltip :title="$t('client.outboundCopy')">
+                  <a-button
+                    type="text"
+                    size="small"
+                    :aria-label="$t('client.outboundCopy')"
+                    @click="copyAddress(record.name)"
+                  >
+                    <AppIcon name="content-copy" />
+                  </a-button>
+                </a-tooltip>
+              </template>
+              <template v-else>
+                <a-tooltip :title="addressEntry(record.name)?.outbound">
+                  <span class="address-muted">—</span>
+                </a-tooltip>
+              </template>
+            </div>
+          </template>
+          <template v-else-if="column.key === 'dates'">
+            <div class="date-cell">
+              <a-tooltip :title="$t('date.created')">
+                <a-tag
+                  v-if="record.createdAt > 0"
+                  class="date-tag"
+                >
+                  {{ dateTime(record.createdAt) }}
+                </a-tag>
+                <a-tag
+                  v-else
+                  class="date-tag"
+                >
+                  -
+                </a-tag>
+              </a-tooltip>
+              <a-tooltip :title="$t('date.expiry')">
+                <a-tag
+                  v-if="record.expiry > 0"
+                  class="date-tag"
+                  :color="record.expiry <= Date.now() / 1000 ? 'red' : undefined"
+                >
+                  {{ dateTime(record.expiry) }}
+                </a-tag>
+                <a-tag
+                  v-else
+                  class="date-tag"
+                  color="green"
+                >
+                  {{ $t('unlimited') }}
+                </a-tag>
+              </a-tooltip>
+            </div>
+          </template>
           <template v-else-if="column.key === 'volume'">
             <a-tooltip :title="'↓' + HumanReadable.sizeFormat(record.down) + ' - ' + HumanReadable.sizeFormat(record.up) + '↑'">
               <a-tag :color="record.volume == 0 ? 'green' : record.volume <= (record.up + record.down) ? 'red' : undefined">
@@ -291,22 +431,6 @@
               size="small"
               style="margin-top: 2px;"
             />
-          </template>
-          <template v-else-if="column.key === 'expiry'">
-            <a-tooltip
-              v-if="record.expiry > 0"
-              :title="new Date(record.expiry * 1000).toLocaleString(locale)"
-            >
-              <a-tag :color="record.expiry <= Date.now() / 1000 ? 'red' : undefined">
-                {{ HumanReadable.remainedDays(record.expiry) }}
-              </a-tag>
-            </a-tooltip>
-            <a-tag
-              v-else
-              color="green"
-            >
-              {{ HumanReadable.remainedDays(record.expiry) }}
-            </a-tag>
           </template>
           <template v-else-if="column.key === 'online'">
             <a-tooltip
@@ -354,17 +478,6 @@
               {{ speedPair(record.name) }}
             </a-tag>
           </template>
-          <template v-else-if="column.key === 'createdAt'">
-            <a-tooltip
-              v-if="record.createdAt > 0"
-              :title="new Date(record.createdAt * 1000).toLocaleString(locale)"
-            >
-              <span>{{ new Date(record.createdAt * 1000).toLocaleDateString(locale) }}</span>
-            </a-tooltip>
-            <template v-else>
-              -
-            </template>
-          </template>
           <template v-else-if="column.key === 'onlineAt'">
             <a-tooltip
               v-if="record.onlineAt > 0"
@@ -393,7 +506,7 @@
               </a-tooltip>
               <a-popconfirm
                 v-model:open="delOverlay[clients.findIndex(c => c.id == record.id)]"
-                :title="$t('confirm')"
+                :title="`${$t('confirm')} ${record.name}? ${$t('client.deleteHint')}`"
                 :ok-text="$t('yes')"
                 :cancel-text="$t('no')"
                 ok-type="danger"
@@ -480,6 +593,8 @@ import { push } from 'notivue'
 import HttpUtils from '@/plugins/httputil'
 import api from '@/plugins/api'
 import { formatSpeedPair, speedFromBytes } from '@/utils/formatSpeed'
+import { outboundAddressSortValue, outboundAddressText, outboundAddressWithPort, type OutboundAddressEntry, type OutboundAddressResponse } from '@/utils/outboundAddress'
+import { formatDateTime } from '@/utils/formatDate'
 
 // A client as it comes back from the panel: saved, so it carries the id and
 // the timestamps that only a client built in the browser is still without.
@@ -586,27 +701,95 @@ const speedRates = ref<Record<string, SpeedSample>>({})
 const speedValue = (name: string, direction: 'up' | 'down'): number => speedRates.value[name]?.[direction] ?? -1
 const speedPair = (name: string): string => formatSpeedPair(speedRates.value[name]?.up ?? null, speedRates.value[name]?.down ?? null)
 
+// The outbound address is read from the current config, not measured. It is
+// fetched once per visible page and rendered immediately; there is no polling
+// and no network probe.
+const addressByUser = ref<Record<string, OutboundAddressEntry>>({})
+const addressEntry = (name: string): OutboundAddressEntry | undefined => addressByUser.value[name]
+const addressWithPort = (name: string): string => outboundAddressWithPort(addressEntry(name))
+const dateTime = (unixSeconds?: number): string => formatDateTime(unixSeconds) || '-'
+
+let addressTimer: ReturnType<typeof setTimeout> | null = null
+let addressSeq = 0
+const addressSeqByUser: Record<string, number> = {}
+
+const fetchAddresses = async () => {
+  const names = pageNames.value
+  if (names.length === 0) return
+  const seq = ++addressSeq
+  for (const name of names) addressSeqByUser[name] = seq
+  try {
+    const response = await api.get<{ success: boolean, obj: OutboundAddressResponse }>('api/outboundAddresses', {
+      params: { users: JSON.stringify(names) },
+      timeout: 5000,
+    })
+    const msg = response.data
+    if (!msg?.success || !msg.obj?.users) return
+    const next = { ...addressByUser.value }
+    for (const name of names) {
+      const entry = msg.obj.users[name]
+      if (!entry) continue
+      if ((addressSeqByUser[name] ?? 0) > seq) continue
+      next[name] = entry
+    }
+    addressByUser.value = next
+  } catch {
+    // Keep whatever was already shown; a page change will retry.
+  }
+}
+
+const scheduleAddressFetch = () => {
+  if (addressTimer !== null) clearTimeout(addressTimer)
+  addressTimer = setTimeout(() => {
+    addressTimer = null
+    void fetchAddresses()
+  }, 0)
+}
+
+const copyAddress = async (name: string) => {
+  const address = outboundAddressText(addressEntry(name))
+  if (!address) return
+  try {
+    await navigator.clipboard.writeText(address)
+    push.success({ title: i18n.global.t('success'), message: i18n.global.t('client.outboundCopy') })
+  } catch {
+    push.error({ title: i18n.global.t('failed'), message: i18n.global.t('client.outboundCopy') })
+  }
+}
+
 const headers = [
-  { title: i18n.global.t('client.name'), dataIndex: 'name', key: 'name', sorter: (a: ClientRow, b: ClientRow) => (a.name ?? '').localeCompare(b.name ?? '') },
-  { title: i18n.global.t('enable'), dataIndex: 'enable', key: 'enable', sorter: (a: ClientRow, b: ClientRow) => Number(a.enable) - Number(b.enable) },
-  { title: i18n.global.t('client.desc'), dataIndex: 'desc', key: 'desc', sorter: (a: ClientRow, b: ClientRow) => (a.desc ?? '').localeCompare(b.desc ?? '') },
-  { title: i18n.global.t('client.group'), dataIndex: 'group', key: 'group', sorter: (a: ClientRow, b: ClientRow) => (a.group ?? '').localeCompare(b.group ?? '') },
-  { title: i18n.global.t('pages.inbounds'), dataIndex: 'inbounds', key: 'inbounds', sorter: (a: ClientRow, b: ClientRow) => (a.inbounds?.length ?? 0) - (b.inbounds?.length ?? 0) },
-  { title: i18n.global.t('actions.action'), key: 'actions' },
+  { title: i18n.global.t('enable'), dataIndex: 'enable', key: 'enable', width: 64, sorter: (a: ClientRow, b: ClientRow) => Number(a.enable) - Number(b.enable) },
+  { title: i18n.global.t('client.name'), dataIndex: 'name', key: 'name', width: 112, sorter: (a: ClientRow, b: ClientRow) => (a.name ?? '').localeCompare(b.name ?? '') },
+  { title: i18n.global.t('client.group'), dataIndex: 'group', key: 'group', width: 76, sorter: (a: ClientRow, b: ClientRow) => (a.group ?? '').localeCompare(b.group ?? '') },
+  { title: i18n.global.t('pages.inbounds'), dataIndex: 'inbounds', key: 'inbounds', width: 92, sorter: (a: ClientRow, b: ClientRow) => (a.inbounds?.length ?? 0) - (b.inbounds?.length ?? 0) },
+  { title: i18n.global.t('client.outboundAddress'), key: 'address', width: 190, sorter: (a: ClientRow, b: ClientRow) => outboundAddressSortValue(addressByUser.value[a.name]).localeCompare(outboundAddressSortValue(addressByUser.value[b.name])) },
+  { title: i18n.global.t('client.createdExpiry'), key: 'dates', width: 160 },
+  { title: i18n.global.t('online'), key: 'online', width: 66, sorter: (a: ClientRow, b: ClientRow) => Number(isOnline(a.name).value) - Number(isOnline(b.name).value) },
+  { title: i18n.global.t('client.connections'), key: 'connections', width: 74, sorter: (a: ClientRow, b: ClientRow) => activeConns(a.name) - activeConns(b.name) },
+  { title: i18n.global.t('client.ips'), key: 'ips', width: 72, sorter: (a: ClientRow, b: ClientRow) => activeIPs(a.name) - activeIPs(b.name) },
   // Sorted by what was used, not by the quota: with unlimited clients every
   // volume is 0 and the column did not sort at all (#1277).
-  { title: i18n.global.t('stats.volume'), dataIndex: 'volume', key: 'volume', sorter: (a: ClientRow, b: ClientRow) => (a.up + a.down) - (b.up + b.down) },
-  { title: i18n.global.t('date.expiry'), dataIndex: 'expiry', key: 'expiry', sorter: (a: ClientRow, b: ClientRow) => a.expiry - b.expiry },
-  { title: i18n.global.t('online'), key: 'online', sorter: (a: ClientRow, b: ClientRow) => Number(isOnline(a.name).value) - Number(isOnline(b.name).value) },
-  { title: i18n.global.t('client.connections'), key: 'connections', sorter: (a: ClientRow, b: ClientRow) => activeConns(a.name) - activeConns(b.name) },
-  { title: i18n.global.t('client.speed'), key: 'speed', width: 250, sorter: (a: ClientRow, b: ClientRow) => (speedValue(a.name, 'up') + speedValue(a.name, 'down')) - (speedValue(b.name, 'up') + speedValue(b.name, 'down')) },
-  { title: i18n.global.t('client.ips'), key: 'ips', sorter: (a: ClientRow, b: ClientRow) => activeIPs(a.name) - activeIPs(b.name) },
-  { title: i18n.global.t('date.created'), dataIndex: 'createdAt', key: 'createdAt', sorter: (a: ClientRow, b: ClientRow) => a.createdAt - b.createdAt },
-  { title: i18n.global.t('date.lastOnline'), dataIndex: 'onlineAt', key: 'onlineAt', sorter: (a: ClientRow, b: ClientRow) => a.onlineAt - b.onlineAt },
+  { title: i18n.global.t('stats.volume'), dataIndex: 'volume', key: 'volume', width: 135, sorter: (a: ClientRow, b: ClientRow) => (a.up + a.down) - (b.up + b.down) },
+  { title: i18n.global.t('client.speed'), key: 'speed', width: 210, sorter: (a: ClientRow, b: ClientRow) => (speedValue(a.name, 'up') + speedValue(a.name, 'down')) - (speedValue(b.name, 'up') + speedValue(b.name, 'down')) },
+  { title: i18n.global.t('actions.action'), key: 'actions', width: 146 },
+  { title: i18n.global.t('date.lastOnline'), dataIndex: 'onlineAt', key: 'onlineAt', width: 125, sorter: (a: ClientRow, b: ClientRow) => a.onlineAt - b.onlineAt },
+  // The description stays at the far right so the operational columns keep
+  // their fixed positions.
+  { title: i18n.global.t('client.desc'), dataIndex: 'desc', key: 'desc', width: 120, sorter: (a: ClientRow, b: ClientRow) => (a.desc ?? '').localeCompare(b.desc ?? '') },
 ]
 
+const searchQuery = ref('')
 const displayedClients = computed((): ClientRow[] => {
-  return filterSettings.value.enabled ? filterSettings.value.filteredClients : clients.value
+  let list = filterSettings.value.enabled ? filterSettings.value.filteredClients : clients.value
+  const query = searchQuery.value.trim().toLowerCase()
+  if (query) {
+    list = list.filter(c =>
+      (c.name ?? '').toLowerCase().includes(query)
+      || (c.group ?? '').toLowerCase().includes(query)
+      || (c.desc ?? '').toLowerCase().includes(query)
+      || (c.remark ?? '').toLowerCase().includes(query))
+  }
+  return list
 })
 
 const itemPerPage = ref(localStorage.getItem('items-per-page') || '10')
@@ -632,6 +815,40 @@ const pageNames = computed((): string[] => {
   return tableData.value.slice(start, start + pageSize.value).map(c => c.name)
 })
 const pageNamesKey = computed((): string => pageNames.value.join('\u0000'))
+
+const paginationConfig = computed(() => {
+  const total = displayedClients.value.length
+  if (total <= 10) return false
+  return {
+    current: currentPage.value,
+    pageSize: pageSize.value,
+    total,
+    showSizeChanger: true,
+    pageSizeOptions: ['10', '25', '50', '100'],
+    showQuickJumper: true,
+    showTotal: (count: number, range: [number, number]) => `${range[0]}-${range[1]} / ${count}`,
+    onChange: (page: number) => {
+      currentPage.value = page
+    },
+    onShowSizeChange: (_: number, size: number) => {
+      setItemPerPage(size)
+      currentPage.value = 1
+    },
+  }
+})
+
+const selectedNames = ref<string[]>([])
+const rowSelection = computed(() => ({
+  selectedRowKeys: selectedNames.value,
+  preserveSelectedRowKeys: true,
+  onChange: (keys: (string | number)[]) => {
+    selectedNames.value = keys.map(String)
+  },
+}))
+
+watch(searchQuery, () => {
+  currentPage.value = 1
+})
 
 let speedBaseline: {
   instance: string
@@ -766,6 +983,10 @@ watch(clientSignature, (signature, previous) => {
 
 watch(pageNamesKey, () => scheduleSpeedRestart())
 
+// immediate: opening the page or changing page/filter/sort asks for exactly
+// the rows the table now shows. Cached outbounds answer without probing.
+watch(pageNamesKey, () => scheduleAddressFetch(), { immediate: true })
+
 onMounted(() => {
   document.addEventListener('visibilitychange', onVisibilityChange)
   scheduleSpeedRestart()
@@ -779,6 +1000,12 @@ onUnmounted(() => {
     speedRestartTimer = null
   }
   resetSpeedSampling()
+  if (addressTimer !== null) {
+    clearTimeout(addressTimer)
+    addressTimer = null
+  }
+  // Drop late responses after the page is gone.
+  addressSeq++
 })
 
 const modal = ref({
@@ -787,6 +1014,29 @@ const modal = ref({
 })
 
 const delOverlay = ref(new Array<boolean>(clients.value.length).fill(false))
+const batchDeleteModal = ref(false)
+const batchDeleteLoading = ref(false)
+
+const confirmBatchDelete = () => {
+  if (selectedNames.value.length === 0) return
+  batchDeleteModal.value = true
+}
+
+const deleteSelected = async () => {
+  const selected = new Set(selectedNames.value)
+  const ids = clients.value.filter(c => selected.has(c.name)).map(c => c.id)
+  if (ids.length === 0) {
+    batchDeleteModal.value = false
+    return
+  }
+  batchDeleteLoading.value = true
+  const success = await Data().save("clients", "delbulk", ids)
+  batchDeleteLoading.value = false
+  if (success) {
+    selectedNames.value = []
+    batchDeleteModal.value = false
+  }
+}
 
 const showModal = async (id: number) => {
   modal.value.id = id
@@ -811,8 +1061,12 @@ const toggleEnable = async (item: ClientRow, val: boolean) => {
 
 const delClient = async (id: number) => {
   const index = clients.value.findIndex(c => c.id === id)
+  const name = clients.value[index]?.name
   const success = await Data().save("clients", "del", id)
-  if (success) delOverlay.value[index] = false
+  if (success) {
+    delOverlay.value[index] = false
+    selectedNames.value = selectedNames.value.filter(n => n !== name)
+  }
 }
 
 const qrcode = ref({
@@ -954,3 +1208,53 @@ const percent = (c: Client) => { return c.volume>0 ? Math.round((c.up+c.down) *1
 const percentColor = (c: Client) => { return (c.up+c.down) >= c.volume ? '#ff4d4f' : percent(c)>90 ? '#faad14' : '#52c41a' }
 
 </script>
+
+<style scoped>
+.client-search-col {
+  flex: 1 1 220px;
+  max-width: 360px;
+}
+.client-search {
+  width: 100%;
+}
+.client-table-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: rgba(0, 0, 0, 0.65);
+  font-size: 12px;
+}
+.client-selected-count {
+  color: #1677ff;
+}
+.address-cell {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: nowrap;
+}
+.address-text {
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.address-muted {
+  color: rgba(0, 0, 0, 0.45);
+}
+.date-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.date-cell :deep(.ant-tag) {
+  margin-inline-end: 0;
+  font-size: 11px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+</style>

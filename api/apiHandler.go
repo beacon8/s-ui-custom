@@ -120,6 +120,8 @@ func (a *APIHandler) getHandler(c *gin.Context) {
 		a.ApiService.GetUserIps(c)
 	case "userRates":
 		a.ApiService.GetUserRates(c)
+	case "outboundAddresses":
+		a.ApiService.GetOutboundAddresses(c)
 	case "logs":
 		a.ApiService.GetLogs(c)
 	case "changes":

@@ -407,3 +407,49 @@ func (s *ImportService) EnrichImportResult(db *gorm.DB, res *ImportResult, hostn
 		}
 	}
 }
+
+// DeleteClientSubscriptions removes the personal subscription row of every
+// deleted client. A group that no longer has any members is removed too; a
+// group shared with surviving clients keeps its identity and token.
+func DeleteClientSubscriptions(tx *gorm.DB, clientIDs []uint) error {
+	if len(clientIDs) == 0 {
+		return nil
+	}
+	const chunk = 400
+	groupIDs := make(map[uint]bool)
+	for start := 0; start < len(clientIDs); start += chunk {
+		end := start + chunk
+		if end > len(clientIDs) {
+			end = len(clientIDs)
+		}
+		var members []model.SubscriptionMember
+		if err := tx.Where("client_id in ?", clientIDs[start:end]).Find(&members).Error; err != nil {
+			return err
+		}
+		for _, member := range members {
+			if member.GroupId != 0 {
+				groupIDs[member.GroupId] = true
+			}
+		}
+		if err := tx.Where("client_id in ?", clientIDs[start:end]).
+			Delete(&model.SubscriptionMember{}).Error; err != nil {
+			return err
+		}
+	}
+	ids := make([]uint, 0, len(groupIDs))
+	for id := range groupIDs {
+		ids = append(ids, id)
+	}
+	for start := 0; start < len(ids); start += chunk {
+		end := start + chunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		if err := tx.Where("id in ?", ids[start:end]).
+			Where("NOT EXISTS (SELECT 1 FROM subscription_members WHERE subscription_members.group_id = subscription_groups.id)").
+			Delete(&model.SubscriptionGroup{}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}

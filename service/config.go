@@ -424,6 +424,7 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 	// Set when the config object changed. The restart waits for the commit, or
 	// a later rollback leaves the core running a config that was never saved.
 	var restartWith json.RawMessage
+	var restartForClients bool
 
 	db := database.GetDB()
 	tx := db.Begin()
@@ -455,6 +456,20 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 			}()
 			return
 		}
+		if restartForClients {
+			// Routes/outbounds were removed; a running core holds the old set.
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						logger.Error("panic while restarting core after client delete: ", r)
+					}
+				}()
+				if err := s.RestartCore(); err != nil {
+					logger.Error("failed to restart core after client delete: ", err)
+				}
+			}()
+			return
+		}
 		// Try to start core if it is not running
 		if corePtr != nil && !corePtr.IsRunning() {
 			s.StartCore()
@@ -474,7 +489,22 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 	switch obj {
 	case "clients":
 		var inboundIds []uint
-		inboundIds, err = s.ClientService.Save(tx, act, data, hostname)
+		if act == "del" || act == "delbulk" {
+			var ids []uint
+			ids, err = clientDeleteIDs(act, data)
+			if err == nil {
+				var changed bool
+				inboundIds, changed, err = s.ClientService.DeleteClients(tx, ids)
+				restartForClients = changed
+				if changed {
+					// Let the caller refresh the outbound list and route config
+					// in the same response instead of showing stale data.
+					objs = append(objs, "outbounds", "config")
+				}
+			}
+		} else {
+			inboundIds, err = s.ClientService.Save(tx, act, data, hostname)
+		}
 		if err == nil && len(inboundIds) > 0 {
 			objs = append(objs, "inbounds")
 			err = s.InboundService.UpdateInboundsUsers(tx, inboundIds)

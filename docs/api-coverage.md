@@ -131,6 +131,31 @@
 | 升级前签发的 Token | GET | `/apiv2/status` | ✅ 旧二进制签发，新二进制启动后仍 200 |
 | 路由覆盖 | — | v1 vs v2 | ✅ `TestAPIv2CoversEveryPanelAction` 机械比对；仅 login/logout 允许会话专用 |
 
+## 用户管理「出站地址」（2026-11-28）
+
+接口说明见 [outbound-address-api.md](outbound-address-api.md)。GET 动作
+`outboundAddresses` 同时注册在 `/api` 与 `/apiv2`，路由覆盖测试自动检查两处
+`case` 对齐。该接口只读当前配置，不拨号、不缓存。
+
+| 面板入口 | 操作 | 方法 | 路径 | 参数 | 权限 | 结果 |
+|---|---|---|---|---|---|---|
+| 用户管理「出站地址」列 | 按当前页批量取数 | GET | `/api/outboundAddresses` | `users` JSON 数组 | 管理员 | ✅ 直接返回 outbound tag 与 server 地址，无探测 |
+| 同上 | Token 调用 | GET | `/apiv2/outboundAddresses` | 同上 | 管理员 Token | ✅ `TestOutboundAddressesAPI` |
+| 同上 | 非法 `users` | GET | `/api/outboundAddresses` | `users=not-json` | 管理员 | ✅ `success:false` |
+| 同上 | SOCKS 出站 | GET | `/api/outboundAddresses` | 用户绑定 `socks-s28` | 管理员 | ✅ `status:ok, address:1.1.1.1, port:80, type:socks` |
+| 同上 | 直连/多出口/无地址 | GET | `/api/outboundAddresses` | `direct`、`selector`、`wireguard` | 管理员 | ✅ `direct` / `multi` / `none` |
+| 同上 | 规则分流/未绑定 | GET | `/api/outboundAddresses` | `users` | 管理员 | ✅ 前置域名规则返回 `split`；reject/缺失 tag 返回 `unbound` |
+| 同上 | 核心停止 | GET | `/api/outboundAddresses` | `users` | 管理员 | ✅ 仍返回配置地址，不依赖核心 |
+| 出站管理 | 同名出站改配置 | POST | `/api/save` + GET | `object=outbounds` | 管理员 | ✅ 表格随当前配置立即变化，无缓存残留 |
+| 出站管理 | 既有延迟测速 | GET | `/api/checkOutbound` | `tag`、`link` | 管理员 | ✅ 未受影响 |
+| 用户管理 IP 列 | 来源 IP 明细/限额 | GET | `/api/userIps` | `user` | 管理员 | ✅ 未受影响 |
+| 用户管理速度列 | 2 秒轮询 | GET | `/api/userRates` | `users` | 管理员 | ✅ 与出站地址请求分离 |
+| 用户管理 | 搜索用户 | 前端过滤 | — | 名称/组/描述/备注 | 管理员 | ✅ 搜索后行数、分页和页脚同步更新 |
+| 用户管理 | 多选批量删除 | POST | `/api/save` | `object=clients`、`action=delbulk`、`data=[ids]` | 管理员 | ✅ 客户端/对应 auth_user 路由/引用出站一起删除（任意 tag），共享与 final 保留 |
+| 用户管理 | 单条删除联动 | POST | `/api/save` | `object=clients`、`action=del`、`data=id` | 管理员 | ✅ 与批量删除共用清理逻辑 |
+| 用户管理 | 删除订阅关联 | POST | `/api/save` | `object=clients`、`action=del/delbulk` | 管理员 | ✅ 个人订阅成员删除；空组删除，共享组保留 |
+
+
 ## 未实测项与原因
 
 1. **服务/端点创建的真实副作用**：服务需要有效证书，端点需要真实

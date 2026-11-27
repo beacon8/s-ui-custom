@@ -24,9 +24,9 @@ describe('formatSpeed', () => {
 
 describe('formatSpeedPair', () => {
   it('renders both directions on one line with an arrow and separator', () => {
-    expect(formatSpeedPair(1_250_000, 318_070)).toBe('↑ 1.25 Mbps / ↓ 318.07 kbps')
-    expect(formatSpeedPair(1_000_000, 100_000)).toBe('↑ 1.00 Mbps / ↓ 100.00 kbps')
-    expect(formatSpeedPair(0, 0)).toBe('↑ 0 kbps / ↓ 0 kbps')
+    expect(formatSpeedPair(1_250_000, 318_070)).toBe('↓ 318.07 kbps / ↑ 1.25 Mbps')
+    expect(formatSpeedPair(1_000_000, 100_000)).toBe('↓ 100.00 kbps / ↑ 1.00 Mbps')
+    expect(formatSpeedPair(0, 0)).toBe('↓ 0 kbps / ↑ 0 kbps')
   })
 
   it('waits for the first sample instead of showing a partial pair', () => {
@@ -38,9 +38,9 @@ describe('formatSpeedPair', () => {
 describe('speedFromBytes', () => {
   it('matches the fixed acceptance examples', () => {
     expect(formatSpeedPair(speedFromBytes(250_000, 2), speedFromBytes(25_000, 2)))
-      .toBe('↑ 1.00 Mbps / ↓ 100.00 kbps')
+      .toBe('↓ 100.00 kbps / ↑ 1.00 Mbps')
     expect(formatSpeedPair(speedFromBytes(250_000, 4), speedFromBytes(25_000, 4)))
-      .toBe('↑ 500.00 kbps / ↓ 50.00 kbps')
+      .toBe('↓ 50.00 kbps / ↑ 500.00 kbps')
   })
 
   it('returns null for an unusable interval', () => {
