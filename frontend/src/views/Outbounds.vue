@@ -7,6 +7,12 @@
     :tags="outboundTags"
     @close="closeModal"
   />
+  <OutboundReplaceIp
+    :visible="replaceModal"
+    :targets="replaceTargets"
+    @close="closeReplace"
+    @done="replaceDone = true"
+  />
   <OutboundBulk
     v-model="bulkModal.visible"
     :visible="bulkModal.visible"
@@ -47,6 +53,15 @@
         @click="showBulkModal"
       >
         {{ $t('actions.addbulk') }}
+      </a-button>
+    </a-col>
+    <a-col flex="none">
+      <a-button
+        danger
+        :disabled="selectedTags.length === 0"
+        @click="replaceModal = true"
+      >
+        {{ $t('outboundReplace.button') }}<template v-if="selectedTags.length"> ({{ selectedTags.length }})</template>
       </a-button>
     </a-col>
     <a-col flex="none">
@@ -100,6 +115,7 @@
         :columns="headers"
         :data-source="filteredOutbounds"
         :pagination="paginationConfig"
+        :row-selection="rowSelection"
         :scroll="{ x: 'max-content' }"
         row-key="tag"
         size="small"
@@ -255,6 +271,7 @@ import Data from '@/store/modules/data'
 import HttpUtils from '@/plugins/httputil'
 import OutboundVue from '@/layouts/modals/Outbound.vue'
 import OutboundBulk from '@/layouts/modals/OutboundBulk.vue'
+import OutboundReplaceIp from '@/layouts/modals/OutboundReplaceIp.vue'
 import Stats from '@/layouts/modals/Stats.vue'
 import Sessions from '@/layouts/modals/Sessions.vue'
 import { Outbound } from '@/types/outbounds'
@@ -314,6 +331,48 @@ const searchQuery = ref('')
 
 const filteredOutbounds = computed((): Outbound[] => {
   return outbounds.value.filter((item) => matchesOutboundSearch(item, searchQuery.value))
+})
+
+const selectedTags = ref<string[]>([])
+const replaceModal = ref(false)
+const replaceDone = ref(false)
+const selectable = (item: Outbound): boolean => ['socks', 'http'].includes(item.type)
+const closeReplace = () => {
+  replaceModal.value = false
+  if (replaceDone.value) {
+    selectedTags.value = []
+    replaceDone.value = false
+  }
+}
+
+const replaceTargets = computed((): Outbound[] => {
+  return selectedTags.value
+    .map(tag => outbounds.value.find(item => item.tag === tag))
+    .filter((item): item is Outbound => item !== undefined && selectable(item))
+})
+
+// Ant reports the selected keys in table order. Keep the existing order and
+// append only newly selected keys, so C -> B -> A is preserved.
+const onSelectionChange = (keys: (string | number)[]) => {
+  const next = keys.map(String)
+  const nextSet = new Set(next)
+  const kept = selectedTags.value.filter(tag => nextSet.has(tag))
+  const added = next.filter(tag => !selectedTags.value.includes(tag))
+  selectedTags.value = [...kept, ...added]
+}
+
+const rowSelection = computed(() => ({
+  selectedRowKeys: selectedTags.value,
+  preserveSelectedRowKeys: true,
+  getCheckboxProps: (item: Outbound) => ({ disabled: !selectable(item) }),
+  onChange: onSelectionChange,
+}))
+
+watch(outbounds, (list) => {
+  selectedTags.value = selectedTags.value.filter(tag => {
+    const item = list.find(outbound => outbound.tag === tag)
+    return item !== undefined && selectable(item)
+  })
 })
 
 const outboundTags = computed((): string[] => {

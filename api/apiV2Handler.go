@@ -49,6 +49,8 @@ func (a *APIv2Handler) postHandler(c *gin.Context) {
 	action := c.Param("postAction")
 
 	switch action {
+	case "replaceOutbounds":
+		a.ApiService.ReplaceOutbounds(c)
 	case "save":
 		a.ApiService.Save(c, username)
 	case "changePass":

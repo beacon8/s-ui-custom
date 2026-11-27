@@ -43,6 +43,8 @@ func (a *APIHandler) postHandler(c *gin.Context) {
 		// A renamed admin's tokens still belong to the same user row, but their
 		// in-memory username is stale until the next load.
 		a.apiv2.ReloadTokens()
+	case "replaceOutbounds":
+		a.ApiService.ReplaceOutbounds(c)
 	case "save":
 		a.ApiService.Save(c, loginUser)
 	case "restartApp":

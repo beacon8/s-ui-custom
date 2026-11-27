@@ -39,7 +39,7 @@
             >
               <a-select
                 v-model:value="inbound.type"
-                :options="Object.keys(inTypes).map((key, index) => ({ title: key, value: Object.values(inTypes)[index] }))"
+                :options="inTypeOrder.map(key => ({ title: key, value: inTypes[key] }))"
                 :field-names="{ label: 'title', value: 'value' }"
                 style="width: 100%"
                 @change="changeType"
@@ -308,6 +308,28 @@ export default {
       loading: false,
       side: "s",
       inTypes: InTypes,
+      // Add-inbound dropdown order only; protocol handling still uses InTypes.
+      inTypeOrder: [
+        'VLESS',
+        'AnyTls',
+        'VMess',
+        'Shadowsocks',
+        'Mixed',
+        'SOCKS',
+        'HTTP',
+        'Trojan',
+        'Hysteria2',
+        'TUIC',
+        'Hysteria',
+        'Naive',
+        'ShadowTLS',
+        'Snell',
+        'Direct',
+        'Tun',
+        'Redirect',
+        'TProxy',
+        'Cloudflared',
+      ] as (keyof typeof InTypes)[],
       inboundWithUsers: ['mixed', 'socks', 'http', 'shadowsocks', 'vmess', 'trojan', 'naive', 'hysteria', 'shadowtls', 'tuic', 'hysteria2', 'vless', 'anytls', 'snell'],
       initUsers: {
         model: 'none',

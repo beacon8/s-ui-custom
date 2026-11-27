@@ -156,6 +156,20 @@
 | 用户管理 | 删除订阅关联 | POST | `/api/save` | `object=clients`、`action=del/delbulk` | 管理员 | ✅ 个人订阅成员删除；空组删除，共享组保留 |
 
 
+## 出站管理「替换 IP」（2026-11-28）
+
+接口说明见 [outbound-replace-ip-api.md](outbound-replace-ip-api.md)。批量替换只
+允许 SOCKS/HTTP，保留原 id/tag/type 与其他配置；同一事务，提交后只生效一次。
+
+| 面板入口 | 操作 | 方法 | 路径 | 参数 | 权限 | 结果 |
+|---|---|---|---|---|---|---|
+| 出站管理 | 勾选 SOCKS/HTTP 并替换 | POST | `/api/replaceOutbounds` | JSON `items` | 管理员 | ✅ 顺序 C→B→A，保存为 C→.66、B→.61、A→.68；四字段准确，version/TLS 保留 |
+| 同上 | Token 调用 | POST | `/apiv2/replaceOutbounds` | JSON `items` | 管理员 Token | ✅ `TestReplaceOutboundsAPI` |
+| 同上 | 重复/缺失/不支持/端口 0 | POST | `/api/replaceOutbounds` | JSON `items` | 管理员 | ✅ 整批回滚，原值不变（service 测试） |
+| 同上 | 空用户名/密码 | POST | `/api/replaceOutbounds` | JSON `items` | 管理员 | ✅ 删除对应认证字段 |
+| 同上 | 运行时生效失败 | POST | `/api/replaceOutbounds` | JSON `items` | 管理员 | ✅ `saved:true, applied:false, warning`；前端保留输入并提示 |
+| 出站管理 | 既有单条编辑/批量新增 | POST | `/api/save` | `object=outbounds` | 管理员 | ✅ 回归通过 |
+
 ## 未实测项与原因
 
 1. **服务/端点创建的真实副作用**：服务需要有效证书，端点需要真实

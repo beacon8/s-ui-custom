@@ -426,6 +426,31 @@ func (a *ApiService) Save(c *gin.Context, loginUser string) {
 	}
 }
 
+// ReplaceOutbounds updates the server and credentials of selected SOCKS/HTTP
+// outbounds in one transaction. A runtime apply failure is reported as a warning
+// because the database transaction has already committed.
+func (a *ApiService) ReplaceOutbounds(c *gin.Context) {
+	var req struct {
+		Items []service.ReplaceOutboundItem `json:"items"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		jsonMsg(c, "replaceOutbounds", common.NewError("invalid JSON body: ", err))
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		jsonMsg(c, "replaceOutbounds", common.NewError("the body must contain exactly one JSON object"))
+		return
+	}
+	result, err := a.OutboundService.ReplaceServers(req.Items)
+	if err != nil {
+		jsonMsg(c, "replaceOutbounds", err)
+		return
+	}
+	jsonObj(c, result, nil)
+}
+
 func (a *ApiService) RestartApp(c *gin.Context) {
 	err := a.PanelService.RestartPanel(3 * time.Second)
 	jsonMsg(c, "restartApp", err)
